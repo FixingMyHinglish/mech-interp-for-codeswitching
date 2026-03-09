@@ -1,0 +1,22 @@
+model_name: "meta-llama/Llama-3.2-3B-Instruct"
+input_path: "data/french.csv"
+output_dir: "outputs/serious_run_french_002"
+
+device: "mps"          # auto|cpu|cuda
+max_length: 256
+batch_size: 10            # currently processed per sample
+
+# Optional; if omitted, TunedLens will try default mapping for model_name.
+# tuned_lens_resource_id: "gpt2"
+
+topk_neurons: 20
+save_full_neuron_activations: true
+full_neuron_export_gzip: true
+full_neuron_round_decimals: 3
+full_neuron_topk_per_layer: 256
+full_neuron_sample_stride: 1
+full_neuron_min_layer_exclusive: 19
+
+
+# Optional. If omitted, pipeline auto-picks a condition containing "english".
+# reference_condition: "english"
