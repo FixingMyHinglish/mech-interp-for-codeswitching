@@ -49,6 +49,7 @@ import argparse
 import json
 import logging
 import sys
+from dataclasses import dataclass
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -70,6 +71,15 @@ from mechinterp_pipeline.io_utils import load_config, load_dataset
 from mechinterp_pipeline.modeling import prepare_model_and_lens
 
 logger = logging.getLogger("causal_analysis")
+
+
+@dataclass
+class CircuitStats:
+    metric: str
+    mean_delta: float
+    ci_low: float
+    ci_high: float
+    p_value: float
 
 
 # ---------------------------------------------------------------------------
@@ -319,6 +329,57 @@ def compute_output_metrics(
     return {"nll": nll, "entropy": entropy, "top1_prob": top1}
 
 
+def bootstrap_ci(
+    values: list[float],
+    n_bootstrap: int,
+    alpha: float,
+    rng: np.random.Generator,
+) -> tuple[float, float, float]:
+    if not values:
+        return (float("nan"), float("nan"), float("nan"))
+    arr = np.asarray(values, dtype=np.float64)
+    mean = float(arr.mean())
+    if len(arr) == 1 or n_bootstrap <= 0:
+        return (mean, mean, mean)
+    idx = rng.integers(0, len(arr), size=(n_bootstrap, len(arr)))
+    boots = arr[idx].mean(axis=1)
+    low = float(np.quantile(boots, alpha / 2))
+    high = float(np.quantile(boots, 1 - alpha / 2))
+    return (mean, low, high)
+
+
+def sign_flip_permutation_pvalue(
+    values: list[float],
+    n_permutations: int,
+    rng: np.random.Generator,
+) -> float:
+    if not values:
+        return float("nan")
+    arr = np.asarray(values, dtype=np.float64)
+    observed = abs(float(arr.mean()))
+    if len(arr) == 1 or n_permutations <= 0:
+        return float(1.0 if observed == 0.0 else 0.0)
+    signs = rng.choice([-1.0, 1.0], size=(n_permutations, len(arr)))
+    perm_means = np.abs((arr * signs).mean(axis=1))
+    p = (np.sum(perm_means >= observed) + 1) / (n_permutations + 1)
+    return float(p)
+
+
+def split_samples_train_eval(
+    samples: pd.DataFrame,
+    train_frac: float,
+    seed: int,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if len(samples) <= 1:
+        return samples.reset_index(drop=True), samples.reset_index(drop=True)
+    if train_frac <= 0 or train_frac >= 1:
+        raise ValueError(f"--train_frac must be in (0,1), got {train_frac}")
+    train_n = max(1, min(len(samples) - 1, int(round(len(samples) * train_frac))))
+    train = samples.sample(n=train_n, random_state=seed)
+    eval_df = samples.drop(train.index)
+    return train.reset_index(drop=True), eval_df.reset_index(drop=True)
+
+
 # ---------------------------------------------------------------------------
 # Step 5 – Patching experiments
 # ---------------------------------------------------------------------------
@@ -332,6 +393,7 @@ def run_patching_experiment(
     max_length: int,
     device: torch.device,
     desc: str = "Patching",
+    compute_individual: bool = True,
 ) -> dict[str, Any]:
     """
     For each target sample, measure three things:
@@ -347,10 +409,13 @@ def run_patching_experiment(
     }
     """
     circuit_deltas: dict[str, list[float]]                             = {m: [] for m in ["nll", "entropy", "top1_prob"]}
-    indiv_deltas:   dict[tuple[int, int], dict[str, list[float]]]      = {
-        (l, n): {m: [] for m in ["nll", "entropy", "top1_prob"]}
-        for l, n in neuron_list
-    }
+    indiv_deltas: dict[tuple[int, int], dict[str, list[float]]] = {}
+    if compute_individual:
+        indiv_deltas = {
+            (l, n): {m: [] for m in ["nll", "entropy", "top1_prob"]}
+            for l, n in neuron_list
+        }
+    per_sample_circuit: list[dict[str, float]] = []
 
     for _, row in tqdm(target_samples.iterrows(), total=len(target_samples), desc=f"  {desc}"):
         encoded = tokenizer(
@@ -372,26 +437,40 @@ def run_patching_experiment(
             circuit = compute_output_metrics(model, encoded, device)
         for m in ["nll", "entropy", "top1_prob"]:
             circuit_deltas[m].append(circuit[m] - baseline[m])
+        per_sample_circuit.append(
+            {
+                "delta_nll": circuit["nll"] - baseline["nll"],
+                "delta_entropy": circuit["entropy"] - baseline["entropy"],
+                "delta_top1_prob": circuit["top1_prob"] - baseline["top1_prob"],
+            }
+        )
 
         # --- Individual neuron effects ---
-        for layer, neuron in neuron_list:
-            if (layer, neuron) not in patch_values:
-                continue
-            single = {(layer, neuron): patch_values[(layer, neuron)]}
-            with patch_pre_down_proj(model, single):
-                patched = compute_output_metrics(model, encoded, device)
-            for m in ["nll", "entropy", "top1_prob"]:
-                indiv_deltas[(layer, neuron)][m].append(patched[m] - baseline[m])
+        if compute_individual:
+            for layer, neuron in neuron_list:
+                if (layer, neuron) not in patch_values:
+                    continue
+                single = {(layer, neuron): patch_values[(layer, neuron)]}
+                with patch_pre_down_proj(model, single):
+                    patched = compute_output_metrics(model, encoded, device)
+                for m in ["nll", "entropy", "top1_prob"]:
+                    indiv_deltas[(layer, neuron)][m].append(patched[m] - baseline[m])
 
     circuit_summary = {
         m: float(np.mean(v)) for m, v in circuit_deltas.items() if v
     }
-    individual_summary = {
-        (l, n): {m: float(np.mean(v)) for m, v in deltas.items() if v}
-        for (l, n), deltas in indiv_deltas.items()
-    }
+    individual_summary = {}
+    if compute_individual:
+        individual_summary = {
+            (l, n): {m: float(np.mean(v)) for m, v in deltas.items() if v}
+            for (l, n), deltas in indiv_deltas.items()
+        }
 
-    return {"circuit": circuit_summary, "individual": individual_summary}
+    return {
+        "circuit": circuit_summary,
+        "individual": individual_summary,
+        "circuit_per_sample": per_sample_circuit,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -614,9 +693,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--output_dir", default="causal_results", help="Where to write outputs")
     p.add_argument("--top_k",      type=int, default=20, help="Candidate neurons per condition")
     p.add_argument(
+        "--topk_sweep",
+        default="",
+        help="Comma-separated top-k sweep values (e.g. 1,3,5,10,20). Uses circuit-only eval.",
+    )
+    p.add_argument(
         "--max_samples", type=int, default=50,
         help="Max samples per condition to use (-1 = all)",
     )
+    p.add_argument("--train_frac", type=float, default=0.5, help="Train split fraction for source activations")
+    p.add_argument("--seed", type=int, default=42, help="Random seed for sampling/splits")
+    p.add_argument("--bootstrap", type=int, default=1000, help="Bootstrap resamples for CI")
+    p.add_argument("--permute", type=int, default=1000, help="Sign-flip permutations for p-values")
+    p.add_argument("--alpha", type=float, default=0.05, help="CI alpha")
     p.add_argument(
         "--log_level", default="INFO",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -657,14 +746,17 @@ def main() -> None:
     def get_samples(cond: str) -> pd.DataFrame:
         sub = df[df["condition"] == cond]
         if args.max_samples > 0 and len(sub) > args.max_samples:
-            sub = sub.sample(n=args.max_samples, random_state=42)
+            sub = sub.sample(n=args.max_samples, random_state=args.seed)
         return sub.reset_index(drop=True)
 
-    cs_samples   = get_samples("code_switched")
+    cs_samples = get_samples("code_switched")
     conf_samples = get_samples("confused")
+    cs_train, cs_eval = split_samples_train_eval(cs_samples, train_frac=args.train_frac, seed=args.seed)
+    conf_train, conf_eval = split_samples_train_eval(conf_samples, train_frac=args.train_frac, seed=args.seed + 1)
     logger.info(
-        "  Using %d CS samples  |  %d confused samples",
-        len(cs_samples), len(conf_samples),
+        "  Using %d CS (%d train / %d eval)  |  %d confused (%d train / %d eval)",
+        len(cs_samples), len(cs_train), len(cs_eval),
+        len(conf_samples), len(conf_train), len(conf_eval),
     )
 
     # ── 3. Model ────────────────────────────────────────────────────────────
@@ -681,18 +773,18 @@ def main() -> None:
     # ── 4. Collect source activations ───────────────────────────────────────
     logger.info("Collecting mean activations — code_switched condition")
     cs_src_acts = collect_source_activations(
-        model, tokenizer, cs_samples, cs_layer_neurons, cfg.max_length, device
+        model, tokenizer, cs_train, cs_layer_neurons, cfg.max_length, device
     )
 
     logger.info("Collecting mean activations — confused condition")
     conf_src_acts = collect_source_activations(
-        model, tokenizer, conf_samples, conf_layer_neurons, cfg.max_length, device
+        model, tokenizer, conf_train, conf_layer_neurons, cfg.max_length, device
     )
 
     # ── 5. Patching experiments ─────────────────────────────────────────────
     logger.info("Experiment A: CS → confused  (patch confused with CS values)")
     cs_to_conf = run_patching_experiment(
-        model, tokenizer, conf_samples,
+        model, tokenizer, conf_eval,
         patch_values=cs_src_acts,
         neuron_list=cs_layer_neurons,
         max_length=cfg.max_length,
@@ -702,13 +794,108 @@ def main() -> None:
 
     logger.info("Experiment B: confused → CS  (patch CS with confusion values)")
     conf_to_cs = run_patching_experiment(
-        model, tokenizer, cs_samples,
+        model, tokenizer, cs_eval,
         patch_values=conf_src_acts,
         neuron_list=conf_layer_neurons,
         max_length=cfg.max_length,
         device=device,
         desc="Exp B  confused → CS",
     )
+
+    # ── 5b. Statistical evaluation on held-out per-sample deltas ──────────
+    rng = np.random.default_rng(args.seed)
+    stats_rows = []
+    for label, res in [("CS → confused", cs_to_conf), ("confused → CS", conf_to_cs)]:
+        per = pd.DataFrame(res.get("circuit_per_sample", []))
+        if per.empty:
+            continue
+        metric_map = {
+            "delta_nll": "nll",
+            "delta_entropy": "entropy",
+            "delta_top1_prob": "top1_prob",
+        }
+        for col, metric_name in metric_map.items():
+            values = per[col].tolist()
+            mean_delta, ci_low, ci_high = bootstrap_ci(
+                values=values,
+                n_bootstrap=args.bootstrap,
+                alpha=args.alpha,
+                rng=rng,
+            )
+            p_val = sign_flip_permutation_pvalue(
+                values=values,
+                n_permutations=args.permute,
+                rng=rng,
+            )
+            stats_rows.append(
+                {
+                    "experiment": label,
+                    "metric": metric_name,
+                    "n_samples": len(values),
+                    "mean_delta": mean_delta,
+                    "ci_low": ci_low,
+                    "ci_high": ci_high,
+                    "p_value_sign_flip": p_val,
+                }
+            )
+
+    # ── 5c. Top-k sweep on held-out set (circuit-only) ────────────────────
+    sweep_rows = []
+    sweep_values: list[int] = []
+    if str(args.topk_sweep).strip():
+        sweep_values = sorted({int(x.strip()) for x in args.topk_sweep.split(",") if x.strip()})
+        if any(k <= 0 for k in sweep_values):
+            raise ValueError("--topk_sweep must contain positive integers")
+
+    if sweep_values:
+        logger.info("Running top-k sweep: %s", sweep_values)
+        if max(sweep_values) > args.top_k:
+            raise ValueError(
+                f"--topk_sweep max ({max(sweep_values)}) cannot exceed --top_k ({args.top_k}) "
+                "because candidates are selected up to top_k."
+            )
+        for k in sweep_values:
+            cs_neurons_k = cs_layer_neurons[:k]
+            conf_neurons_k = conf_layer_neurons[:k]
+            cs_patch_k = {ln: cs_src_acts[ln] for ln in cs_neurons_k if ln in cs_src_acts}
+            conf_patch_k = {ln: conf_src_acts[ln] for ln in conf_neurons_k if ln in conf_src_acts}
+
+            a = run_patching_experiment(
+                model, tokenizer, conf_eval,
+                patch_values=cs_patch_k,
+                neuron_list=cs_neurons_k,
+                max_length=cfg.max_length,
+                device=device,
+                desc=f"Sweep k={k} A",
+                compute_individual=False,
+            )
+            b = run_patching_experiment(
+                model, tokenizer, cs_eval,
+                patch_values=conf_patch_k,
+                neuron_list=conf_neurons_k,
+                max_length=cfg.max_length,
+                device=device,
+                desc=f"Sweep k={k} B",
+                compute_individual=False,
+            )
+            sweep_rows.append(
+                {
+                    "top_k": k,
+                    "experiment": "CS → confused",
+                    "circuit_delta_nll": a["circuit"].get("nll", float("nan")),
+                    "circuit_delta_entropy": a["circuit"].get("entropy", float("nan")),
+                    "circuit_delta_top1_prob": a["circuit"].get("top1_prob", float("nan")),
+                }
+            )
+            sweep_rows.append(
+                {
+                    "top_k": k,
+                    "experiment": "confused → CS",
+                    "circuit_delta_nll": b["circuit"].get("nll", float("nan")),
+                    "circuit_delta_entropy": b["circuit"].get("entropy", float("nan")),
+                    "circuit_delta_top1_prob": b["circuit"].get("top1_prob", float("nan")),
+                }
+            )
 
     # ── 6. Save outputs ─────────────────────────────────────────────────────
     logger.info("Saving results to %s", out_root)
@@ -724,6 +911,8 @@ def main() -> None:
         row.update({f"circuit_delta_{k}": v for k, v in res["circuit"].items()})
         circuit_rows.append(row)
     pd.DataFrame(circuit_rows).to_csv(tables_dir / "circuit_effects.csv", index=False)
+    pd.DataFrame(stats_rows).to_csv(tables_dir / "circuit_stats.csv", index=False)
+    pd.DataFrame(sweep_rows).to_csv(tables_dir / "topk_sweep.csv", index=False)
 
     plot_patching_effects(effects_all, figs_dir / "patching_effects.html")
 
@@ -734,8 +923,8 @@ def main() -> None:
         conf_to_cs=conf_to_cs,
         model_name=cfg.model_name,
         source_run=str(source_run),
-        n_cs_samples=len(cs_samples),
-        n_conf_samples=len(conf_samples),
+        n_cs_samples=len(cs_eval),
+        n_conf_samples=len(conf_eval),
         out_path=out_root / "CAUSAL_SUMMARY.txt",
     )
 
@@ -743,9 +932,19 @@ def main() -> None:
         "model_name":       cfg.model_name,
         "source_run":       str(source_run),
         "top_k":            args.top_k,
+        "topk_sweep":       sweep_values,
         "max_samples":      args.max_samples,
-        "cs_samples_used":  len(cs_samples),
-        "conf_samples_used":len(conf_samples),
+        "train_frac":       args.train_frac,
+        "seed":             args.seed,
+        "bootstrap":        args.bootstrap,
+        "permute":          args.permute,
+        "alpha":            args.alpha,
+        "cs_samples_total": len(cs_samples),
+        "conf_samples_total": len(conf_samples),
+        "cs_samples_train": len(cs_train),
+        "cs_samples_eval": len(cs_eval),
+        "conf_samples_train": len(conf_train),
+        "conf_samples_eval": len(conf_eval),
         "circuit_cs_to_conf":  cs_to_conf["circuit"],
         "circuit_conf_to_cs":  conf_to_cs["circuit"],
     }
@@ -766,6 +965,8 @@ def main() -> None:
     print("  Key outputs:")
     print(f"    {out_root / 'CAUSAL_SUMMARY.txt'}")
     print(f"    {tables_dir / 'patching_effects.csv'}")
+    print(f"    {tables_dir / 'circuit_stats.csv'}")
+    print(f"    {tables_dir / 'topk_sweep.csv'}")
     print(f"    {figs_dir   / 'patching_effects.html'}")
     print("=" * 60 + "\n")
 

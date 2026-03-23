@@ -1,6 +1,7 @@
-model_name: "meta-llama/Llama-3.2-3B-Instruct"
-input_path: "data/hindi.csv"
-output_dir: "outputs/hindi_run_001"
+# model_name: "meta-llama/Llama-3.2-3B-Instruct"
+model_name: "gpt2"
+input_path: "data/french.csv"
+output_dir: "outputs/GPT2_french"
 
 device: "mps"          # auto|cpu|cuda
 max_length: 256
@@ -8,6 +9,7 @@ batch_size: 10            # currently processed per sample
 
 # Optional; if omitted, TunedLens will try default mapping for model_name.
 # tuned_lens_resource_id: "gpt2"
+concept_column: "condition"
 
 topk_neurons: 100
 save_full_neuron_activations: true

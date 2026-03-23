@@ -23,6 +23,8 @@ For each run, outputs are written under `outputs/<run_name>/`:
 - `tables/pairwise_summary.csv` (all-condition pairwise deltas)
 - `tables/neuron_events.csv` (per-sample per-layer top-neuron events)
 - `tables/neuron_tendency.csv` (aggregated neuron firing tendencies)
+- `tables/sample_neuron_contrast.csv` (per source sample: neuron activations across conditions + deltas)
+- `tables/sample_layer_condition_distance.csv` (per source sample/layer: cosine & top-neuron overlap across condition pairs)
 - `text_exports/neuron_events.jsonl`
 - `text_exports/neuron_tendency.jsonl`
 - `text_exports/full_neuron_activations.jsonl` (optional; very large)
@@ -62,7 +64,7 @@ pip install -e .
 ## Configure
 
 ```bash
-cp config.example.yaml config.yaml
+config.yaml
 ```
 
 Main fields:
@@ -91,10 +93,28 @@ If `reference_condition` is omitted, the pipeline auto-picks a condition contain
 ## Run
 
 ```bash
-PYTHONPATH=src python scripts/run_pipeline.py --config config.yaml
+ python scripts/run_pipeline.py --config config.yaml
 ```
 
 ## Notes
 
 - Neuron stats are MLP-neuron proxies when architecture allows (`up_proj`/`c_fc`/`fc_in`/`gate_proj`), otherwise hidden-dimension salience.
 - If Tuned Lens is unavailable for your model, the pipeline falls back to logit-lens-like probing so analyses still run.
+
+- `tables/concept_selectivity.csv` (neuron-concept selectivity: diff/ratio/effect-size/KL)
+- `tables/concept_purity.csv` (top-activation concept purity/entropy per neuron)
+- `tables/concept_layer_density.csv` (fraction of concept-associated neurons per layer)
+- `tables/concept_classifier_summary.csv` (concept prediction from neuron activations: accuracy/F1/AUC)
+- `tables/concept_classifier_per_class.csv`
+- `tables/concept_clustering_summary.csv` (cluster/silhouette over neuron concept profiles)
+- `tables/concept_hierarchy_consistency.csv` (if hierarchy CSV provided)
+- `tables/concept_functional_effects.csv` (ablation/boost/inhibit NLL deltas; optional heavy)
+- `text_exports/CONCEPT_METRICS_SUMMARY.txt`
+- `concept_column`: dataset column to treat as concept label (default `domain`)
+- `compute_concept_metrics`: compute concept association/selectivity/classifier/structure metrics
+- `concept_top_n_purity`: top-N activations used for purity/entropy
+- `concept_classifier_test_size`: test split fraction for concept prediction metric
+- `concept_hierarchy_path`: optional CSV (`child,parent`) for hierarchical consistency metric
+- `compute_concept_functional_tests`: run functional ablation/boost/inhibit tests (expensive)
+- `concept_functional_topk_neurons`: top selective neurons per concept for functional tests
+- `concept_functional_max_samples`: sample cap for functional tests

@@ -162,12 +162,17 @@ def _collect_mlp_neuron_proxy(
 
 def _manual_lens_logits(
     hidden_state: torch.Tensor,
-    layer_idx: int,
+    lens_layer_idx: int | None,
     model: torch.nn.Module,
     lens: Any,
 ) -> torch.Tensor:
-    if lens is not None:
-        transformed = lens.transform_hidden(hidden_state, layer_idx)
+    if lens is not None and lens_layer_idx is not None:
+        try:
+            transformed = lens.transform_hidden(hidden_state, lens_layer_idx)
+        except (IndexError, KeyError):
+            # Some model/lens pairs expose fewer translators than hidden-state entries
+            # (e.g. final residual state). Fall back to identity for unmatched layers.
+            transformed = hidden_state
     else:
         transformed = hidden_state
 
@@ -223,10 +228,22 @@ def analyze_text(
 
     layer_metrics: dict[int, dict[str, float]] = {}
     final_h = hidden_states[-1].squeeze(0)
+    lens_n_layers = len(lens.layer_translators) if lens is not None else 0
 
     for layer_idx in range(len(hidden_states)):
         h = hidden_states[layer_idx].squeeze(0)
-        lens_logits = _manual_lens_logits(h, layer_idx, model, lens)
+        lens_layer_idx: int | None
+        if lens is None:
+            lens_layer_idx = None
+        elif len(hidden_states) == lens_n_layers + 1:
+            # Common case (e.g. GPT-2): hidden_states includes embeddings at index 0.
+            lens_layer_idx = layer_idx - 1 if layer_idx > 0 else None
+        elif layer_idx < lens_n_layers:
+            lens_layer_idx = layer_idx
+        else:
+            lens_layer_idx = None
+
+        lens_logits = _manual_lens_logits(h, lens_layer_idx, model, lens)
         lens_log_probs = F.log_softmax(lens_logits, dim=-1)
 
         n_positions = min(lens_log_probs.shape[0] - 1, next_labels.shape[0])

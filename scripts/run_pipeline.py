@@ -5,6 +5,7 @@ import argparse
 import gzip
 import json
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -21,9 +22,11 @@ from mechinterp_pipeline.analysis import (
     aggregate_layer_metrics,
     aggregate_neuron_metrics,
     aggregate_neuron_tendency,
+    build_sample_neuron_contrasts,
     build_neuron_event_table,
     compare_conditions,
 )
+from mechinterp_pipeline.concept_metrics import compute_all_concept_metrics
 from mechinterp_pipeline.io_utils import ensure_dirs, load_config, load_dataset
 from mechinterp_pipeline.modeling import analyze_text, prepare_model_and_lens
 from mechinterp_pipeline.visualize import (
@@ -47,8 +50,219 @@ def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Compare LLM internals for code-switched vs language-confused text using Tuned Lens"
     )
-    p.add_argument("--config", required=True, help="Path to YAML config")
-    return p.parse_args()
+    p.add_argument("--config", help="Path to YAML config")
+    p.add_argument(
+        "--new-compute-only",
+        action="store_true",
+        help="Run only new-compute (and optional visuals) without running the main pipeline.",
+    )
+    p.add_argument(
+        "--new-compute-run-dir",
+        default=None,
+        help="Pipeline output directory containing tables/neuron_proxy_raw.csv.",
+    )
+    p.add_argument(
+        "--new-compute-out-dir",
+        default=None,
+        help="Output directory for new-compute tables. If omitted and --config is set, derives from config output_dir.",
+    )
+    p.add_argument(
+        "--new-compute-selection-backend",
+        default="transformer_lens",
+        choices=["transformer_lens", "pipeline_proxy"],
+        help="Backend used for neuron selection in compute_condition_specific_neurons.py.",
+    )
+    p.add_argument("--new-compute-model-name", default=None, help="Optional model override for TL selection backend.")
+    p.add_argument("--new-compute-device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
+    p.add_argument("--new-compute-max-length", type=int, default=256)
+    p.add_argument(
+        "--new-compute-reduce-mode",
+        default="mean_abs",
+        choices=["mean_abs", "mean", "max_abs"],
+    )
+    p.add_argument("--new-compute-activation-cutoff", type=float, default=0.0)
+    p.add_argument("--new-compute-importance-quantile", type=float, default=0.90)
+    p.add_argument("--new-compute-importance-min", type=float, default=None)
+    p.add_argument("--new-compute-min-domain-consistency", type=float, default=0.50)
+    p.add_argument("--new-compute-cs-label", default="code_switched")
+    p.add_argument("--new-compute-confused-label", default="confused")
+    p.add_argument("--new-compute-english-label", default="english")
+    p.add_argument("--new-compute-target-label", default="target_language")
+    p.add_argument(
+        "--new-compute-with-visuals",
+        action="store_true",
+        help="If set, run new-compute visuals after the new-compute tables are built.",
+    )
+    p.add_argument("--new-compute-dataset-csv", default=None, help="Dataset path for visualization script.")
+    p.add_argument(
+        "--new-compute-visual-out-dir",
+        default=None,
+        help="Output directory for new-compute visuals. If omitted and --config is set, derives from config output_dir.",
+    )
+    p.add_argument("--new-compute-visual-samples", type=int, default=5)
+    p.add_argument(
+        "--new-compute-overall-sample-cap",
+        type=int,
+        default=0,
+        help="Max rows per condition for aggregate visuals (0 means all rows per condition).",
+    )
+    p.add_argument("--new-compute-attention-layer", type=int, default=0)
+    p.add_argument(
+        "--new-compute-visual-backend",
+        default="hf",
+        choices=["hf", "transformer_lens"],
+        help="Backend used by new-compute visualization script.",
+    )
+    p.add_argument(
+        "--new-compute-target-mode",
+        default="predicted_next_token",
+        choices=["predicted_next_token", "observed_next_token"],
+    )
+    args = p.parse_args()
+
+    if args.new_compute_only:
+        if args.new_compute_with_visuals and not args.new_compute_dataset_csv and not args.config:
+            p.error(
+                "--new-compute-dataset-csv is required for --new-compute-with-visuals "
+                "unless --config is provided."
+            )
+    else:
+        if not args.config:
+            p.error("--config is required unless --new-compute-only is set.")
+    return args
+
+
+def _resolve_new_compute_paths(
+    args: argparse.Namespace,
+) -> tuple[Path | None, Path, Path | None, Path | None]:
+    cfg = load_config(args.config) if args.config else None
+
+    run_dir = Path(args.new_compute_run_dir) if args.new_compute_run_dir else (cfg.output_dir if cfg else None)
+    if run_dir is None and args.new_compute_selection_backend == "pipeline_proxy":
+        raise ValueError(
+            "Could not resolve run_dir for pipeline_proxy backend. "
+            "Provide --new-compute-run-dir or pass --config with output_dir."
+        )
+
+    if args.new_compute_out_dir:
+        out_dir = Path(args.new_compute_out_dir)
+    elif cfg is not None and run_dir is not None:
+        out_dir = PROJECT_ROOT / "new-compute" / f"results_{run_dir.name}"
+    else:
+        out_dir = PROJECT_ROOT / "new-compute" / "results"
+
+    need_dataset = args.new_compute_with_visuals or args.new_compute_selection_backend == "transformer_lens"
+    dataset_csv: Path | None = None
+    if need_dataset:
+        dataset_csv = Path(args.new_compute_dataset_csv) if args.new_compute_dataset_csv else (cfg.input_path if cfg else None)
+        if dataset_csv is None:
+            raise ValueError(
+                "Could not resolve dataset_csv. Provide --new-compute-dataset-csv "
+                "or pass --config with input_path."
+            )
+
+    if not args.new_compute_with_visuals:
+        return run_dir, out_dir, dataset_csv, None
+
+    if args.new_compute_visual_out_dir:
+        visual_out_dir = Path(args.new_compute_visual_out_dir)
+    elif cfg is not None and run_dir is not None:
+        visual_out_dir = PROJECT_ROOT / "new-compute" / f"visuals_{run_dir.name}"
+    else:
+        visual_out_dir = PROJECT_ROOT / "new-compute" / "visuals"
+
+    if run_dir is None:
+        raise ValueError(
+            "run_dir is required when --new-compute-with-visuals is set. "
+            "Provide --new-compute-run-dir or --config with output_dir."
+        )
+
+    return run_dir, out_dir, dataset_csv, visual_out_dir
+
+
+def _run_new_compute_only(args: argparse.Namespace) -> tuple[Path, Path | None]:
+    run_dir, out_dir, dataset_csv, visual_out_dir = _resolve_new_compute_paths(args)
+    resolved_model_name = args.new_compute_model_name
+    if resolved_model_name is None and args.config:
+        try:
+            resolved_model_name = load_config(args.config).model_name
+        except Exception:
+            resolved_model_name = None
+
+    compute_script = PROJECT_ROOT / "new-compute" / "compute_condition_specific_neurons.py"
+    cmd = [
+        sys.executable,
+        str(compute_script),
+        "--backend",
+        str(args.new_compute_selection_backend),
+        "--out_dir",
+        str(out_dir),
+        "--activation_cutoff",
+        str(args.new_compute_activation_cutoff),
+        "--min_domain_consistency",
+        str(args.new_compute_min_domain_consistency),
+        "--cs_label",
+        str(args.new_compute_cs_label),
+        "--confused_label",
+        str(args.new_compute_confused_label),
+        "--english_label",
+        str(args.new_compute_english_label),
+        "--target_label",
+        str(args.new_compute_target_label),
+    ]
+    if run_dir is not None:
+        cmd.extend(["--run_dir", str(run_dir)])
+    if dataset_csv is not None:
+        cmd.extend(["--dataset_csv", str(dataset_csv)])
+    if resolved_model_name is not None:
+        cmd.extend(["--model_name", str(resolved_model_name)])
+    cmd.extend(
+        [
+            "--device",
+            str(args.new_compute_device),
+            "--max_length",
+            str(args.new_compute_max_length),
+            "--reduce_mode",
+            str(args.new_compute_reduce_mode),
+        ]
+    )
+    if args.new_compute_importance_min is not None:
+        cmd.extend(["--importance_min", str(args.new_compute_importance_min)])
+    else:
+        cmd.extend(["--importance_quantile", str(args.new_compute_importance_quantile)])
+
+    subprocess.run(cmd, check=True)
+
+    if args.new_compute_with_visuals:
+        viz_script = PROJECT_ROOT / "new-compute" / "visualize_new_compute.py"
+        viz_cmd = [
+            sys.executable,
+            str(viz_script),
+            "--run_dir",
+            str(run_dir),
+            "--dataset_csv",
+            str(dataset_csv),
+            "--results_dir",
+            str(out_dir),
+            "--out_dir",
+            str(visual_out_dir),
+            "--n_random_samples",
+            str(args.new_compute_visual_samples),
+            "--overall_sample_cap",
+            str(args.new_compute_overall_sample_cap),
+            "--attention_layer",
+            str(args.new_compute_attention_layer),
+            "--backend",
+            str(args.new_compute_visual_backend),
+            "--target_mode",
+            str(args.new_compute_target_mode),
+        ]
+        if resolved_model_name is not None:
+            viz_cmd.extend(["--model_name", str(resolved_model_name)])
+        subprocess.run(viz_cmd, check=True)
+        return out_dir, visual_out_dir
+
+    return out_dir, None
 
 
 def _setup_logging(level: str) -> None:
@@ -99,6 +313,28 @@ def _write_important_numbers_text(
     out_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def _write_concept_metrics_text(out_path: Path, concept_outputs) -> None:
+    lines = ["CONCEPT METRICS SUMMARY", ""]
+    if not concept_outputs.classifier_summary.empty:
+        lines.append("Classifier summary:")
+        for _, r in concept_outputs.classifier_summary.iterrows():
+            parts = [f"{k}={r[k]}" for k in concept_outputs.classifier_summary.columns]
+            lines.append("- " + " | ".join(parts))
+    if not concept_outputs.clustering_summary.empty:
+        lines.append("")
+        lines.append("Clustering summary:")
+        for _, r in concept_outputs.clustering_summary.iterrows():
+            parts = [f"{k}={r[k]}" for k in concept_outputs.clustering_summary.columns]
+            lines.append("- " + " | ".join(parts))
+    if not concept_outputs.hierarchy_consistency.empty:
+        lines.append("")
+        lines.append("Hierarchy consistency:")
+        for _, r in concept_outputs.hierarchy_consistency.iterrows():
+            parts = [f"{k}={r[k]}" for k in concept_outputs.hierarchy_consistency.columns]
+            lines.append("- " + " | ".join(parts))
+    out_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _compress_full_neuron_layers(
     layers: dict[int, list[float]] | dict[str, list[float]],
     round_decimals: int,
@@ -133,6 +369,15 @@ def _compress_full_neuron_layers(
 
 def main() -> None:
     args = parse_args()
+    if args.new_compute_only:
+        out_dir, visual_out_dir = _run_new_compute_only(args)
+        print(
+            "Done. New-compute-only run finished. "
+            f"Results: {out_dir}"
+            + (f" | Visuals: {visual_out_dir}" if visual_out_dir is not None else "")
+        )
+        return
+
     cfg = load_config(args.config)
     _setup_logging(cfg.log_level)
     logger = logging.getLogger("run_pipeline")
@@ -209,6 +454,8 @@ def main() -> None:
                     collect_full_neuron_activations=cfg.save_full_neuron_activations,
                     full_neuron_reduce_mode=cfg.full_neuron_reduce_mode,
                 )
+                rec["source_id"] = str(row["source_id"]) if "source_id" in row else str(row["id"])
+                rec["concept_label"] = str(row[cfg.concept_column]) if cfg.concept_column in row else str(row["domain"])
                 if (
                     full_activation_fh is not None
                     and "full_neuron_activations" in rec
@@ -216,6 +463,7 @@ def main() -> None:
                 ):
                     full_payload = {
                         "id": rec["id"],
+                        "source_id": rec.get("source_id", rec["id"]),
                         "condition": rec["condition"],
                         "domain": rec["domain"],
                         "n_tokens": rec["n_tokens"],
@@ -273,7 +521,6 @@ def main() -> None:
         len(neuron_events_df),
         len(neuron_tendency_df),
     )
-
     logger.info("Computing condition comparisons")
     comparisons = compare_conditions(
         layer_df,
@@ -283,6 +530,15 @@ def main() -> None:
     )
     ref = comparisons.reference_condition
     non_ref_conditions = [c for c in comparisons.conditions if c != ref]
+    sample_neuron_contrast_df, sample_layer_distance_df = build_sample_neuron_contrasts(
+        neuron_events_df,
+        reference_condition=ref,
+    )
+    logger.info(
+        "Sample contrast exports: neuron_rows=%d layer_pair_rows=%d",
+        len(sample_neuron_contrast_df),
+        len(sample_layer_distance_df),
+    )
     logger.info("Comparison done: reference=%s others=%s", ref, non_ref_conditions)
 
     logger.info("Writing tabular outputs")
@@ -297,6 +553,41 @@ def main() -> None:
     comparisons.pairwise_summary.to_csv(tables_dir / "pairwise_summary.csv", index=False)
     neuron_events_df.to_csv(tables_dir / "neuron_events.csv", index=False)
     neuron_tendency_df.to_csv(tables_dir / "neuron_tendency.csv", index=False)
+    sample_neuron_contrast_df.to_csv(tables_dir / "sample_neuron_contrast.csv", index=False)
+    sample_layer_distance_df.to_csv(tables_dir / "sample_layer_condition_distance.csv", index=False)
+
+    if cfg.compute_concept_metrics:
+        logger.info("Computing concept metrics (concept column: %s)", cfg.concept_column)
+        concept_df = df.copy()
+        if cfg.concept_column in concept_df.columns:
+            concept_df["concept_label"] = concept_df[cfg.concept_column].astype(str)
+        else:
+            concept_df["concept_label"] = concept_df["domain"].astype(str)
+        concept_outputs = compute_all_concept_metrics(
+            neuron_events_df=neuron_events_df,
+            dataset_df=concept_df,
+            concept_col="concept_label",
+            prepared=prepared,
+            max_length=cfg.max_length,
+            hierarchy_path=cfg.concept_hierarchy_path,
+            top_n_purity=cfg.concept_top_n_purity,
+            classifier_test_size=cfg.concept_classifier_test_size,
+            random_seed=cfg.concept_random_seed,
+            compute_functional_tests=cfg.compute_concept_functional_tests,
+            functional_topk_neurons=cfg.concept_functional_topk_neurons,
+            functional_max_samples=cfg.concept_functional_max_samples,
+        )
+
+        concept_outputs.selectivity.to_csv(tables_dir / "concept_selectivity.csv", index=False)
+        concept_outputs.purity.to_csv(tables_dir / "concept_purity.csv", index=False)
+        concept_outputs.layer_density.to_csv(tables_dir / "concept_layer_density.csv", index=False)
+        concept_outputs.classifier_summary.to_csv(tables_dir / "concept_classifier_summary.csv", index=False)
+        concept_outputs.classifier_per_class.to_csv(tables_dir / "concept_classifier_per_class.csv", index=False)
+        concept_outputs.clustering_summary.to_csv(tables_dir / "concept_clustering_summary.csv", index=False)
+        concept_outputs.hierarchy_consistency.to_csv(tables_dir / "concept_hierarchy_consistency.csv", index=False)
+        concept_outputs.functional_effects.to_csv(tables_dir / "concept_functional_effects.csv", index=False)
+        _write_concept_metrics_text(text_dir / "CONCEPT_METRICS_SUMMARY.txt", concept_outputs)
+        logger.info("Concept metrics written")
 
     neuron_events_df.to_json(text_dir / "neuron_events.jsonl", orient="records", lines=True)
     neuron_tendency_df.to_json(text_dir / "neuron_tendency.jsonl", orient="records", lines=True)
@@ -319,6 +610,9 @@ def main() -> None:
                 "full_neuron_min_layer_exclusive": cfg.full_neuron_min_layer_exclusive,
                 "full_neuron_topk_per_layer": int(cfg.full_neuron_topk_per_layer),
                 "full_neuron_sample_stride": int(cfg.full_neuron_sample_stride),
+                "concept_column": cfg.concept_column,
+                "compute_concept_metrics": bool(cfg.compute_concept_metrics),
+                "compute_concept_functional_tests": bool(cfg.compute_concept_functional_tests),
             },
             indent=2,
         ),

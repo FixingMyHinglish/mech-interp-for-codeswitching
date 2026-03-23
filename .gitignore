@@ -3,7 +3,13 @@ causal_results/
 visuals/
 config.example.yaml
 .DS_Store
+**/.DS_Store
 __pycache__/
+**/__pycache__/
 *.pyc
-outputs/serious_run_french_002/text_exports/full_neuron_activations.jsonl
-outputs/serious_run_french_002/text_exports/full_neuron_activations.jsonl.gz
+*.pyo
+outputs/
+new-compute/results*/
+new-compute/ab_*/
+new-compute/ablation_*/
+new-compute/visuals_*/

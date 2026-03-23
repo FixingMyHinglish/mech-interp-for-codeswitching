@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import combinations
 from typing import Any
 
 import numpy as np
@@ -57,11 +58,13 @@ def aggregate_layer_metrics(per_sample_records: list[dict[str, Any]]) -> pd.Data
     for rec in per_sample_records:
         cond = rec["condition"]
         sid = rec["id"]
+        source_id = rec.get("source_id", sid)
         domain = rec["domain"]
         for layer_idx, vals in rec["layer_metrics"].items():
             rows.append(
                 {
                     "id": sid,
+                    "source_id": source_id,
                     "domain": domain,
                     "condition": cond,
                     "layer": layer_idx,
@@ -82,6 +85,7 @@ def aggregate_attention_metrics(per_sample_records: list[dict[str, Any]]) -> pd.
     rows = []
     for rec in per_sample_records:
         sid = rec["id"]
+        source_id = rec.get("source_id", sid)
         cond = rec["condition"]
         domain = rec["domain"]
         for layer_idx, entropies in rec["attention_entropy"].items():
@@ -89,6 +93,7 @@ def aggregate_attention_metrics(per_sample_records: list[dict[str, Any]]) -> pd.
                 rows.append(
                     {
                         "id": sid,
+                        "source_id": source_id,
                         "domain": domain,
                         "condition": cond,
                         "layer": layer_idx,
@@ -96,7 +101,7 @@ def aggregate_attention_metrics(per_sample_records: list[dict[str, Any]]) -> pd.
                         "attention_entropy": h_val,
                     }
                 )
-    cols = ["id", "domain", "condition", "layer", "head", "attention_entropy"]
+    cols = ["id", "source_id", "domain", "condition", "layer", "head", "attention_entropy"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -105,6 +110,7 @@ def aggregate_neuron_metrics(per_sample_records: list[dict[str, Any]]) -> pd.Dat
     rows = []
     for rec in per_sample_records:
         sid = rec["id"]
+        source_id = rec.get("source_id", sid)
         cond = rec["condition"]
         domain = rec["domain"]
         for layer_idx, top_neurons in rec["top_neurons"].items():
@@ -112,6 +118,7 @@ def aggregate_neuron_metrics(per_sample_records: list[dict[str, Any]]) -> pd.Dat
                 rows.append(
                     {
                         "id": sid,
+                        "source_id": source_id,
                         "domain": domain,
                         "condition": cond,
                         "layer": layer_idx,
@@ -119,7 +126,7 @@ def aggregate_neuron_metrics(per_sample_records: list[dict[str, Any]]) -> pd.Dat
                         "activation": score,
                     }
                 )
-    cols = ["id", "domain", "condition", "layer", "neuron", "activation"]
+    cols = ["id", "source_id", "domain", "condition", "layer", "neuron", "activation"]
     return pd.DataFrame(rows, columns=cols)
 
 
@@ -128,15 +135,19 @@ def build_neuron_event_table(per_sample_records: list[dict[str, Any]]) -> pd.Dat
     rows = []
     for rec in per_sample_records:
         sid = rec["id"]
+        source_id = rec.get("source_id", sid)
         cond = rec["condition"]
         domain = rec["domain"]
+        concept_label = rec.get("concept_label", domain)
         n_tokens = rec.get("n_tokens", None)
         for layer_idx, top_neurons in rec["top_neurons"].items():
             for rank, (neuron_idx, score) in enumerate(top_neurons, start=1):
                 rows.append(
                     {
                         "id": sid,
+                        "source_id": source_id,
                         "domain": domain,
+                        "concept_label": concept_label,
                         "condition": cond,
                         "n_tokens": n_tokens,
                         "layer": layer_idx,
@@ -147,7 +158,9 @@ def build_neuron_event_table(per_sample_records: list[dict[str, Any]]) -> pd.Dat
                 )
     cols = [
         "id",
+        "source_id",
         "domain",
+        "concept_label",
         "condition",
         "n_tokens",
         "layer",
@@ -190,6 +203,111 @@ def aggregate_neuron_tendency(neuron_events_df: pd.DataFrame) -> pd.DataFrame:
         )
     )
     return grouped
+
+
+
+def build_sample_neuron_contrasts(
+    neuron_events_df: pd.DataFrame,
+    reference_condition: str = "english",
+    topn_for_jaccard: int = 50,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    if neuron_events_df.empty:
+        return (
+            pd.DataFrame(
+                columns=[
+                    "source_id",
+                    "layer",
+                    "neuron",
+                    "dominant_condition",
+                    "dominant_margin",
+                ]
+            ),
+            pd.DataFrame(
+                columns=[
+                    "source_id",
+                    "layer",
+                    "condition_a",
+                    "condition_b",
+                    "cosine_similarity",
+                    "cosine_distance",
+                    "topn_jaccard",
+                ]
+            ),
+        )
+
+    grouped = (
+        neuron_events_df.groupby(["source_id", "condition", "layer", "neuron"], as_index=False)["activation"]
+        .mean()
+    )
+    conditions = sorted(grouped["condition"].unique().tolist())
+
+    wide = (
+        grouped.pivot(
+            index=["source_id", "layer", "neuron"],
+            columns="condition",
+            values="activation",
+        )
+        .fillna(0.0)
+        .reset_index()
+    )
+
+    for cond in conditions:
+        if cond not in wide.columns:
+            wide[cond] = 0.0
+
+    cond_values = wide[conditions].to_numpy(dtype=np.float64)
+    max_idx = cond_values.argmax(axis=1)
+    sorted_vals = np.sort(cond_values, axis=1)
+    margins = sorted_vals[:, -1] - sorted_vals[:, -2] if sorted_vals.shape[1] > 1 else sorted_vals[:, -1]
+    wide["dominant_condition"] = [conditions[i] for i in max_idx]
+    wide["dominant_margin"] = margins
+
+    if reference_condition in conditions:
+        for cond in conditions:
+            if cond == reference_condition:
+                continue
+            wide[f"delta_{cond}_minus_{reference_condition}"] = wide[cond] - wide[reference_condition]
+
+    distance_rows = []
+    for (source_id, layer), g in grouped.groupby(["source_id", "layer"]):
+        mat = (
+            g.pivot(index="neuron", columns="condition", values="activation")
+            .fillna(0.0)
+        )
+        for cond in conditions:
+            if cond not in mat.columns:
+                mat[cond] = 0.0
+        mat = mat[conditions]
+
+        top_sets: dict[str, set[int]] = {}
+        for cond in conditions:
+            s = mat[cond]
+            k = min(topn_for_jaccard, len(s))
+            top_sets[cond] = set(s.nlargest(k).index.tolist())
+
+        for cond_a, cond_b in combinations(conditions, 2):
+            va = mat[cond_a].to_numpy(dtype=np.float64)
+            vb = mat[cond_b].to_numpy(dtype=np.float64)
+            denom = (np.linalg.norm(va) * np.linalg.norm(vb))
+            cos = float(np.dot(va, vb) / denom) if denom > 0 else 0.0
+            inter = len(top_sets[cond_a].intersection(top_sets[cond_b]))
+            union = len(top_sets[cond_a].union(top_sets[cond_b]))
+            jacc = float(inter / union) if union else 0.0
+
+            distance_rows.append(
+                {
+                    "source_id": source_id,
+                    "layer": int(layer),
+                    "condition_a": cond_a,
+                    "condition_b": cond_b,
+                    "cosine_similarity": cos,
+                    "cosine_distance": 1.0 - cos,
+                    "topn_jaccard": jacc,
+                }
+            )
+
+    layer_distance_df = pd.DataFrame(distance_rows)
+    return wide, layer_distance_df
 
 
 

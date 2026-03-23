@@ -32,6 +32,15 @@ class PipelineConfig:
     full_neuron_min_layer_exclusive: int | None = None
     full_neuron_topk_per_layer: int = 0
     full_neuron_sample_stride: int = 1
+    concept_column: str = "condition"
+    compute_concept_metrics: bool = True
+    concept_top_n_purity: int = 50
+    concept_classifier_test_size: float = 0.2
+    concept_random_seed: int = 42
+    concept_hierarchy_path: str | None = None
+    compute_concept_functional_tests: bool = False
+    concept_functional_topk_neurons: int = 20
+    concept_functional_max_samples: int = 200
 
 
 
@@ -71,6 +80,15 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         ),
         full_neuron_topk_per_layer=int(raw.get("full_neuron_topk_per_layer", 0)),
         full_neuron_sample_stride=max(1, int(raw.get("full_neuron_sample_stride", 1))),
+        concept_column=str(raw.get("concept_column", "domain")),
+        compute_concept_metrics=bool(raw.get("compute_concept_metrics", True)),
+        concept_top_n_purity=int(raw.get("concept_top_n_purity", 50)),
+        concept_classifier_test_size=float(raw.get("concept_classifier_test_size", 0.2)),
+        concept_random_seed=int(raw.get("concept_random_seed", 42)),
+        concept_hierarchy_path=raw.get("concept_hierarchy_path"),
+        compute_concept_functional_tests=bool(raw.get("compute_concept_functional_tests", False)),
+        concept_functional_topk_neurons=int(raw.get("concept_functional_topk_neurons", 20)),
+        concept_functional_max_samples=int(raw.get("concept_functional_max_samples", 200)),
     )
 
 
