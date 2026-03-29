@@ -204,3 +204,12 @@ Key outputs:
 - `ab_summary.json`
 - `a_consistent_baseline.csv.gz`
 - `b_consistent_tl.csv.gz`
+
+## Experiment-Specific Runners
+
+For standalone experiment folders (each runnable on its own), see:
+
+- `new-compute/experiments/exp4_switch_activation/`
+- `new-compute/experiments/exp6_language_selectivity/`
+- `new-compute/experiments/exp21_language_pair_comparison/`
+- `new-compute/experiments/exp7_neuron_clustering_interpretation/`
