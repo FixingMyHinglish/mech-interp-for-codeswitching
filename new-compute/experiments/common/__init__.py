@@ -8,6 +8,11 @@ from .tl import (
     resolve_device,
 )
 from .utils import infer_target_script, label_token_language, longest_common_prefix
+from .utils import (
+    infer_target_language_code_fasttext,
+    label_token_language_fasttext,
+    load_fasttext_model,
+)
 
 __all__ = [
     "derive_source_id",
@@ -16,8 +21,11 @@ __all__ = [
     "extract_post_activations",
     "format_offset",
     "infer_target_script",
+    "infer_target_language_code_fasttext",
     "label_token_language",
+    "label_token_language_fasttext",
     "load_dataset",
+    "load_fasttext_model",
     "load_tl_model",
     "longest_common_prefix",
     "resolve_device",

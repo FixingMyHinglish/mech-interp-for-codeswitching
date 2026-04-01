@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Sequence
+from pathlib import Path
+from typing import Any, Sequence
 
 import pandas as pd
 
@@ -68,3 +69,71 @@ def label_token_language(token: str, target_script: str) -> str:
         return "mixed"
     return "other"
 
+
+def load_fasttext_model(model_path: str | Path) -> Any:
+    try:
+        import fasttext
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise ImportError(
+            "fasttext is required for --language_id_method fasttext. "
+            "Install with: python3 -m pip install fasttext"
+        ) from exc
+    path = Path(model_path)
+    if not path.exists():
+        raise FileNotFoundError(f"FastText model file not found: {path}")
+    return fasttext.load_model(str(path))
+
+
+def _fasttext_label_to_lang(label: str) -> str:
+    prefix = "__label__"
+    if label.startswith(prefix):
+        return label[len(prefix) :]
+    return label
+
+
+def infer_target_language_code_fasttext(
+    df: pd.DataFrame,
+    *,
+    target_label: str,
+    model: Any,
+) -> str:
+    subset = df[df["condition"] == target_label]
+    if subset.empty:
+        return "unknown"
+
+    counts: dict[str, int] = defaultdict(int)
+    for text in subset["text"].astype(str).head(500):
+        labels, _probs = model.predict(text.replace("\n", " "), k=1)
+        if not labels:
+            continue
+        lang = _fasttext_label_to_lang(str(labels[0]))
+        counts[lang] += 1
+
+    if not counts:
+        return "unknown"
+    return max(counts.items(), key=lambda item: item[1])[0]
+
+
+def label_token_language_fasttext(
+    token: str,
+    *,
+    model: Any,
+    target_lang_code: str,
+    english_lang_code: str = "en",
+    min_prob: float = 0.0,
+) -> str:
+    clean = _clean_token(token)
+    if not clean:
+        return "other"
+    labels, probs = model.predict(clean, k=1)
+    if not labels:
+        return "other"
+    lang = _fasttext_label_to_lang(str(labels[0]))
+    prob = float(probs[0]) if probs else 0.0
+    if prob < float(min_prob):
+        return "other"
+    if lang == english_lang_code:
+        return "english"
+    if target_lang_code != "unknown" and lang == target_lang_code:
+        return "target"
+    return "other"
