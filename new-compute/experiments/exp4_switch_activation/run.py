@@ -32,11 +32,13 @@ from common import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Experiment 4: switch-point neuron activation patterns "
-            "(code-switched vs monolingual baselines)."
+            "Experiment 4: switch-point neuron activation patterns. "
+            "For each sample, identifies neurons that are more active in the "
+            "code-switched version than in EVERY monolingual baseline at the switch "
+            "point. Reports neurons that show this pattern consistently across samples."
         )
     )
-    p.add_argument("--dataset_csv", required=True, help="Dataset with id/text/condition/domain/source_id.")
+    p.add_argument("--dataset_csv", required=True, help="Dataset CSV with id/text/condition/domain/source_id.")
     p.add_argument("--model_name", required=True, help="Hugging Face model name for TransformerLens.")
     p.add_argument("--out_dir", default="new-compute/experiments/exp4_switch_activation/results")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
@@ -44,8 +46,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--focus_condition", default="code_switched")
     p.add_argument("--baseline_conditions", nargs="+", default=["english", "target_language"])
     p.add_argument("--token_offsets", nargs="+", type=int, default=[-1, 0, 1])
-    p.add_argument("--z_threshold", type=float, default=2.0)
-    p.add_argument("--top_k", type=int, default=50)
+    p.add_argument(
+        "--min_consistency_fraction",
+        type=float,
+        default=0.5,
+        help=(
+            "Minimum fraction of samples in which a neuron must show switch-specific "
+            "activation to be included in the consistent output (default: 0.5)."
+        ),
+    )
     p.add_argument("--max_groups", type=int, default=None)
     p.add_argument(
         "--gpu_friendly",
@@ -56,77 +65,6 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     return p.parse_args()
-
-
-def _pair_name(focus_condition: str, baseline_condition: str) -> str:
-    return f"{focus_condition}_vs_{baseline_condition}"
-
-
-def _ensure_slot(slot_map: dict, key: tuple[str, str, int, int], vector: np.ndarray) -> dict:
-    if key not in slot_map:
-        zeros = np.zeros_like(vector, dtype=np.float64)
-        slot_map[key] = {
-            "n": 0,
-            "focus_sum": zeros.copy(),
-            "focus_sumsq": zeros.copy(),
-            "base_sum": zeros.copy(),
-            "base_sumsq": zeros.copy(),
-            "delta_sum": zeros.copy(),
-        }
-    return slot_map[key]
-
-
-def _positions_for_offsets(anchor: int, offsets: list[int], seq_len: int) -> set[int]:
-    return {anchor + off for off in offsets if 0 <= anchor + off < seq_len}
-
-
-def _safe_std(mean: np.ndarray, sumsq: np.ndarray, n: int) -> np.ndarray:
-    if n <= 1:
-        return np.full_like(mean, np.nan, dtype=np.float64)
-    var = np.maximum((sumsq - (mean * mean * n)) / max(n - 1, 1), 0.0)
-    return np.sqrt(var)
-
-
-def _build_consensus(stats_df: pd.DataFrame, focus_condition: str, z_threshold: float) -> pd.DataFrame:
-    if stats_df.empty:
-        return pd.DataFrame()
-    pivot = stats_df.pivot_table(
-        index=["focus_condition", "relative_offset", "layer", "neuron"],
-        columns="baseline_condition",
-        values=["z_score", "mean_delta", "n_pairs"],
-        aggfunc="first",
-    )
-    baseline_cols = list(pivot.columns.get_level_values(1).unique())
-    if len(baseline_cols) < 2:
-        return pd.DataFrame()
-
-    z_cols = [("z_score", b) for b in baseline_cols]
-    d_cols = [("mean_delta", b) for b in baseline_cols]
-    n_cols = [("n_pairs", b) for b in baseline_cols]
-    out = pivot.copy()
-    out["min_z_score"] = out[z_cols].min(axis=1)
-    out["min_mean_delta"] = out[d_cols].min(axis=1)
-    out["min_pairs"] = out[n_cols].min(axis=1).astype(int)
-    out["passes_consistency"] = (
-        (out["min_z_score"] >= z_threshold)
-        & (out["min_mean_delta"] > 0.0)
-    )
-    out = out.reset_index()
-    out.columns = [c[0] if isinstance(c, tuple) else c for c in out.columns]
-    out = out[out["focus_condition"] == focus_condition].copy()
-    out["required_baselines"] = ",".join(str(x) for x in baseline_cols)
-    cols = [
-        "focus_condition",
-        "relative_offset",
-        "layer",
-        "neuron",
-        "min_z_score",
-        "min_mean_delta",
-        "min_pairs",
-        "passes_consistency",
-        "required_baselines",
-    ]
-    return out[cols]
 
 
 def main() -> None:
@@ -147,6 +85,7 @@ def main() -> None:
     )
     tokenizer = model.tokenizer
 
+    # Group samples by source_id so we can match code-switched with its monolinguals.
     by_source: dict[str, dict[str, dict[str, str]]] = {}
     for row in df.itertuples(index=False):
         by_source.setdefault(row.source_id, {})[row.condition] = {
@@ -160,23 +99,37 @@ def main() -> None:
     if args.max_groups is not None:
         source_items = source_items[: max(1, int(args.max_groups))]
 
-    stats_map: dict[tuple[str, str, int, int], dict[str, np.ndarray | int]] = {}
-    event_rows: list[dict[str, object]] = []
-    pair_counts: dict[tuple[str, str, int], int] = {}
+    # Per-(offset, layer) accumulation.
+    # count_map[(rel_off, layer)] is a 1-D int array of length n_neurons where
+    # count_map[key][n] = number of samples where neuron n was switch-specific.
+    # total_map[rel_off] = number of samples that contributed to that offset.
+    count_map: dict[tuple[int, int], np.ndarray] = {}
+    total_map: dict[int, int] = {}
 
-    for idx, (source_id, cond_map) in enumerate(tqdm(source_items, desc="Exp4 matched groups"), start=1):
+    event_rows: list[dict] = []
+    skipped: list[dict] = []
+
+    for idx, (source_id, cond_map) in enumerate(
+        tqdm(source_items, desc="Exp4 matched groups"), start=1
+    ):
         if args.focus_condition not in cond_map:
             continue
 
+        # Require ALL baseline conditions to be present so the intersection
+        # "active in cs but not in ANY monolingual" is meaningful.
         valid_baselines = [b for b in args.baseline_conditions if b in cond_map]
         if not valid_baselines:
             continue
 
+        # ------------------------------------------------------------------
+        # Tokenise all needed conditions and run the model.
+        # ------------------------------------------------------------------
         needed_conditions = [args.focus_condition] + valid_baselines
         token_id_cache: dict[str, list[int]] = {}
         act_cache: dict[str, dict[int, np.ndarray]] = {}
         seq_len_cache: dict[str, int] = {}
 
+        skip_sample = False
         for cond in needed_conditions:
             input_ids = encode_text(
                 tokenizer=tokenizer,
@@ -186,211 +139,280 @@ def main() -> None:
             )
             ids = input_ids[0].detach().cpu().tolist()
             if len(ids) < 2:
-                continue
+                skip_sample = True
+                break
             token_id_cache[cond] = ids
             seq_len_cache[cond] = len(ids)
             act_cache[cond] = extract_post_activations(model, input_ids)
 
-        if args.focus_condition not in token_id_cache:
+        if skip_sample or any(c not in token_id_cache for c in needed_conditions):
+            skipped.append({"source_id": source_id, "reason": "short_sequence"})
             continue
 
-        for baseline_condition in valid_baselines:
-            if baseline_condition not in token_id_cache:
-                continue
-            focus_ids = token_id_cache[args.focus_condition]
-            base_ids = token_id_cache[baseline_condition]
-            prefix_len = longest_common_prefix(focus_ids, base_ids)
-            if prefix_len >= min(len(focus_ids), len(base_ids)):
-                continue
+        # ------------------------------------------------------------------
+        # Find the switch point (longest common prefix) between the focus
+        # condition and each baseline separately.  Each comparison may have
+        # its switch at a different token position.
+        # anchor_map[baseline][rel_off] = (focus_pos, base_pos)
+        # ------------------------------------------------------------------
+        anchor_map: dict[str, dict[int, tuple[int, int]]] = {}
 
-            pair_name = _pair_name(args.focus_condition, baseline_condition)
+        all_valid = True
+        for baseline in valid_baselines:
+            focus_ids = token_id_cache[args.focus_condition]
+            base_ids = token_id_cache[baseline]
+            prefix_len = longest_common_prefix(focus_ids, base_ids)
+
+            if prefix_len >= min(len(focus_ids), len(base_ids)):
+                # Texts are identical up to the shorter one – no real switch point.
+                skipped.append(
+                    {"source_id": source_id, "reason": f"no_switch_point_vs_{baseline}"}
+                )
+                all_valid = False
+                break
+
             focus_anchor = int(prefix_len)
             base_anchor = int(prefix_len)
+
             event_rows.append(
                 {
                     "source_id": source_id,
-                    "comparison": pair_name,
                     "focus_condition": args.focus_condition,
-                    "baseline_condition": baseline_condition,
+                    "baseline_condition": baseline,
                     "focus_event_token_index": focus_anchor,
                     "baseline_event_token_index": base_anchor,
                 }
             )
 
-            focus_positions = _positions_for_offsets(
-                focus_anchor, args.token_offsets, seq_len_cache[args.focus_condition]
-            )
-            base_positions = _positions_for_offsets(
-                base_anchor, args.token_offsets, seq_len_cache[baseline_condition]
-            )
-            common_offsets = []
+            offsets_for_pair: dict[int, tuple[int, int]] = {}
             for rel_off in args.token_offsets:
-                pf = focus_anchor + rel_off
-                pb = base_anchor + rel_off
-                if pf in focus_positions and pb in base_positions:
-                    common_offsets.append(rel_off)
+                fp = focus_anchor + rel_off
+                bp = base_anchor + rel_off
+                if (
+                    0 <= fp < seq_len_cache[args.focus_condition]
+                    and 0 <= bp < seq_len_cache[baseline]
+                ):
+                    offsets_for_pair[rel_off] = (fp, bp)
 
-            if not common_offsets:
-                continue
+            anchor_map[baseline] = offsets_for_pair
 
-            for rel_off in common_offsets:
-                focus_pos = focus_anchor + rel_off
-                base_pos = base_anchor + rel_off
-                key_count = (pair_name, baseline_condition, int(rel_off))
-                pair_counts[key_count] = pair_counts.get(key_count, 0) + 1
+        if not all_valid:
+            continue
 
-                focus_layers = act_cache[args.focus_condition]
-                base_layers = act_cache[baseline_condition]
-                for layer in sorted(set(focus_layers).intersection(base_layers)):
-                    focus_vec = focus_layers[layer][focus_pos].astype(np.float64, copy=False)
-                    base_vec = base_layers[layer][base_pos].astype(np.float64, copy=False)
-                    slot_key = (pair_name, baseline_condition, int(rel_off), int(layer))
-                    slot = _ensure_slot(stats_map, slot_key, focus_vec)
-                    slot["n"] = int(slot["n"]) + 1
-                    slot["focus_sum"] += focus_vec
-                    slot["focus_sumsq"] += focus_vec * focus_vec
-                    slot["base_sum"] += base_vec
-                    slot["base_sumsq"] += base_vec * base_vec
-                    slot["delta_sum"] += focus_vec - base_vec
+        # ------------------------------------------------------------------
+        # For each offset, build the switch-specific boolean mask for this
+        # sample, then accumulate counts.
+        #
+        # A neuron is "switch-specific" for this sample at this offset if
+        # its activation in the code-switched text is strictly greater than
+        # its activation in EVERY monolingual baseline at the corresponding
+        # switch position.
+        # ------------------------------------------------------------------
+        focus_acts = act_cache[args.focus_condition]
+        common_layers = set(focus_acts.keys())
+        for baseline in valid_baselines:
+            common_layers &= set(act_cache[baseline].keys())
+
+        # An offset is usable only if every baseline has a valid position for it.
+        usable_offsets = [
+            rel_off
+            for rel_off in args.token_offsets
+            if all(rel_off in anchor_map[b] for b in valid_baselines)
+        ]
+
+        if not usable_offsets:
+            skipped.append({"source_id": source_id, "reason": "no_usable_offsets"})
+            continue
+
+        for rel_off in usable_offsets:
+            offset_contributed = False
+
+            for layer in sorted(common_layers):
+                # n_neurons determined from the first position of the focus activations.
+                n_neurons = focus_acts[layer][0].shape[0]
+                # Start with every neuron as a candidate.
+                switch_mask = np.ones(n_neurons, dtype=bool)
+
+                for baseline in valid_baselines:
+                    focus_pos, base_pos = anchor_map[baseline][rel_off]
+                    focus_vec = focus_acts[layer][focus_pos].astype(np.float64)
+                    base_vec = act_cache[baseline][layer][base_pos].astype(np.float64)
+                    # Neuron must be strictly more active in cs than this baseline.
+                    switch_mask &= focus_vec > base_vec
+
+                key = (int(rel_off), int(layer))
+                if key not in count_map:
+                    count_map[key] = np.zeros(n_neurons, dtype=np.int64)
+                count_map[key] += switch_mask.astype(np.int64)
+                offset_contributed = True
+
+            # Count this sample once per offset once at least one layer was processed.
+            if offset_contributed:
+                total_map[rel_off] = total_map.get(rel_off, 0) + 1
+
         if bool(args.gpu_friendly) and device.type == "cuda" and idx % 64 == 0:
             torch.cuda.empty_cache()
 
+    # ------------------------------------------------------------------
+    # Save event alignments and skipped log.
+    # ------------------------------------------------------------------
     if event_rows:
         pd.DataFrame(event_rows).to_csv(tables_dir / "event_alignments.csv", index=False)
+    if skipped:
+        pd.DataFrame(skipped).to_csv(tables_dir / "skipped_samples.csv", index=False)
 
-    frames: list[pd.DataFrame] = []
-    for (comparison, baseline_condition, rel_off, layer), slot in stats_map.items():
-        n_pairs = int(slot["n"])
-        if n_pairs <= 0:
+    # ------------------------------------------------------------------
+    # Build the per-neuron count table and the consistency-filtered table.
+    # ------------------------------------------------------------------
+    all_rows: list[pd.DataFrame] = []
+    consistent_rows: list[pd.DataFrame] = []
+
+    for (rel_off, layer), counts in sorted(count_map.items()):
+        n_total = total_map.get(rel_off, 0)
+        if n_total == 0:
             continue
-        focus_mean = slot["focus_sum"] / n_pairs
-        base_mean = slot["base_sum"] / n_pairs
-        delta_mean = slot["delta_sum"] / n_pairs
-        base_std = _safe_std(base_mean, slot["base_sumsq"], n_pairs)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            z = np.divide(delta_mean, base_std, out=np.zeros_like(delta_mean), where=base_std > 0)
-        neurons = np.arange(len(delta_mean), dtype=int)
-        frames.append(
-            pd.DataFrame(
-                {
-                    "comparison": comparison,
-                    "focus_condition": args.focus_condition,
-                    "baseline_condition": baseline_condition,
-                    "relative_offset": int(rel_off),
-                    "layer": int(layer),
-                    "neuron": neurons,
-                    "n_pairs": n_pairs,
-                    "mean_focus_activation": focus_mean,
-                    "mean_baseline_activation": base_mean,
-                    "std_baseline_activation": base_std,
-                    "mean_delta": delta_mean,
-                    "z_score": z,
-                }
-            )
-        )
 
-    stats_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-    if not stats_df.empty:
-        stats_df = stats_df.sort_values(
-            ["comparison", "relative_offset", "layer", "neuron"]
+        n_neurons = len(counts)
+        neurons = np.arange(n_neurons, dtype=int)
+        consistency = counts / float(n_total)
+
+        frame = pd.DataFrame(
+            {
+                "relative_offset": int(rel_off),
+                "layer": int(layer),
+                "neuron": neurons,
+                "n_samples_switch_specific": counts,
+                "n_samples_total": n_total,
+                "consistency_fraction": consistency,
+            }
         )
-    stats_df.to_csv(
-        tables_dir / "activation_pair_stats.csv.gz",
+        all_rows.append(frame)
+
+        mask = consistency >= float(args.min_consistency_fraction)
+        if mask.any():
+            consistent_rows.append(frame[mask].copy())
+
+    # Full counts table (every neuron, every offset/layer).
+    all_neurons_df = (
+        pd.concat(all_rows, ignore_index=True)
+        if all_rows
+        else pd.DataFrame(
+            columns=[
+                "relative_offset",
+                "layer",
+                "neuron",
+                "n_samples_switch_specific",
+                "n_samples_total",
+                "consistency_fraction",
+            ]
+        )
+    )
+    if not all_neurons_df.empty:
+        all_neurons_df = all_neurons_df.sort_values(
+            ["relative_offset", "layer", "neuron"]
+        ).reset_index(drop=True)
+
+    all_neurons_df.to_csv(
+        tables_dir / "switch_neuron_counts.csv.gz",
         index=False,
         compression="gzip",
     )
 
-    summary_df = pd.DataFrame()
-    if not stats_df.empty:
-        summary_df = (
-            stats_df.assign(
-                z_gt_threshold=stats_df["z_score"] >= float(args.z_threshold),
-            )
-            .groupby(
-                ["comparison", "baseline_condition", "relative_offset", "layer"],
-                as_index=False,
-            )
-            .agg(
-                n_pairs=("n_pairs", "max"),
-                n_neurons=("neuron", "size"),
-                n_switch_specific=("z_gt_threshold", "sum"),
-                mean_abs_delta=("mean_delta", lambda s: float(np.mean(np.abs(s.to_numpy(dtype=float))))),
-            )
+    # Consistent-neurons table (filtered, sorted by consistency desc).
+    consistent_df = (
+        pd.concat(consistent_rows, ignore_index=True)
+        if consistent_rows
+        else pd.DataFrame(
+            columns=[
+                "relative_offset",
+                "layer",
+                "neuron",
+                "n_samples_switch_specific",
+                "n_samples_total",
+                "consistency_fraction",
+            ]
         )
-        summary_df["pct_switch_specific"] = (
-            100.0 * summary_df["n_switch_specific"] / summary_df["n_neurons"].clip(lower=1)
+    )
+    if not consistent_df.empty:
+        consistent_df = consistent_df.sort_values(
+            ["relative_offset", "consistency_fraction", "n_samples_switch_specific"],
+            ascending=[True, False, False],
+        ).reset_index(drop=True)
+
+    consistent_df.to_csv(tables_dir / "consistent_switch_neurons.csv", index=False)
+
+    # ------------------------------------------------------------------
+    # Per-offset summary table.
+    # ------------------------------------------------------------------
+    summary_rows: list[dict] = []
+    for rel_off in sorted(total_map.keys()):
+        n_total = total_map[rel_off]
+        sub = all_neurons_df[all_neurons_df["relative_offset"] == rel_off]
+        if sub.empty:
+            continue
+        n_consistent = int(
+            (sub["consistency_fraction"] >= float(args.min_consistency_fraction)).sum()
         )
-    summary_df.to_csv(tables_dir / "switch_specific_summary.csv", index=False)
+        summary_rows.append(
+            {
+                "relative_offset": int(rel_off),
+                "n_samples_total": n_total,
+                "n_neuron_layer_pairs_total": int(len(sub)),
+                "n_consistent_neuron_layer_pairs": n_consistent,
+                "pct_consistent": round(100.0 * n_consistent / max(len(sub), 1), 4),
+                "max_consistency_fraction": float(sub["consistency_fraction"].max()),
+                "mean_consistency_fraction": float(sub["consistency_fraction"].mean()),
+            }
+        )
+    pd.DataFrame(summary_rows).to_csv(tables_dir / "switch_neuron_summary.csv", index=False)
 
-    consensus_df = _build_consensus(
-        stats_df=stats_df,
-        focus_condition=args.focus_condition,
-        z_threshold=float(args.z_threshold),
-    )
-    consensus_df.to_csv(
-        tables_dir / "switch_consensus.csv.gz",
-        index=False,
-        compression="gzip",
-    )
+    # ------------------------------------------------------------------
+    # Heatmaps of consistency fraction and per-offset consistent-neuron tables.
+    # ------------------------------------------------------------------
+    if not all_neurons_df.empty:
+        for rel_off, sub in all_neurons_df.groupby("relative_offset"):
+            write_neuron_heatmap(
+                sub,
+                value_col="consistency_fraction",
+                title=f"Switch-specific consistency offset {int(rel_off):+d}",
+                out_path=figures_dir
+                / f"switch_consistency_offset_{format_offset(int(rel_off))}_heatmap.html",
+            )
 
-    if not stats_df.empty:
-        for (comparison, rel_off), sub in stats_df.groupby(["comparison", "relative_offset"]):
-            top = sub.sort_values(
-                ["z_score", "mean_delta"],
+    if not consistent_df.empty:
+        for rel_off, sub in consistent_df.groupby("relative_offset"):
+            sub.sort_values(
+                ["consistency_fraction", "n_samples_switch_specific"],
                 ascending=[False, False],
-            ).head(int(args.top_k))
-            top.to_csv(
-                tables_dir / f"top_neurons_{comparison}_offset_{format_offset(int(rel_off))}.csv",
-                index=False,
-            )
-            write_neuron_heatmap(
-                sub,
-                value_col="mean_delta",
-                title=f"{comparison} offset {rel_off:+d} mean_delta",
-                out_path=figures_dir / f"{comparison}_offset_{format_offset(int(rel_off))}_mean_delta_heatmap.html",
-            )
-            write_neuron_heatmap(
-                sub,
-                value_col="z_score",
-                title=f"{comparison} offset {rel_off:+d} z_score",
-                out_path=figures_dir / f"{comparison}_offset_{format_offset(int(rel_off))}_zscore_heatmap.html",
-            )
-
-    if not consensus_df.empty:
-        for rel_off, sub in consensus_df.groupby("relative_offset"):
-            write_neuron_heatmap(
-                sub.rename(columns={"min_z_score": "value"}),
-                value_col="value",
-                title=f"switch consensus offset {int(rel_off):+d} min_z_score",
-                out_path=figures_dir / f"switch_consensus_offset_{format_offset(int(rel_off))}_zscore_heatmap.html",
-            )
-            top_consensus = sub.sort_values(
-                ["passes_consistency", "min_z_score", "min_mean_delta"],
-                ascending=[False, False, False],
-            ).head(int(args.top_k))
-            top_consensus.to_csv(
-                tables_dir / f"top_consensus_neurons_offset_{format_offset(int(rel_off))}.csv",
+            ).to_csv(
+                tables_dir
+                / f"consistent_neurons_offset_{format_offset(int(rel_off))}.csv",
                 index=False,
             )
 
-    summary = {
+    # ------------------------------------------------------------------
+    # Run summary JSON.
+    # ------------------------------------------------------------------
+    run_summary = {
         "experiment": "exp4_switch_activation",
         "dataset_csv": str(args.dataset_csv),
         "model_name": str(args.model_name),
         "focus_condition": str(args.focus_condition),
         "baseline_conditions": list(args.baseline_conditions),
         "token_offsets": [int(x) for x in args.token_offsets],
-        "z_threshold": float(args.z_threshold),
-        "top_k": int(args.top_k),
+        "min_consistency_fraction": float(args.min_consistency_fraction),
         "gpu_friendly": bool(args.gpu_friendly),
         "n_source_groups_scanned": int(len(source_items)),
         "n_event_pairs": int(len(event_rows)),
-        "n_pair_offsets_with_data": int(len(pair_counts)),
+        "n_skipped": int(len(skipped)),
+        "n_consistent_neuron_layer_pairs": int(len(consistent_df)),
         "tables_dir": str(tables_dir),
         "figures_dir": str(figures_dir),
     }
-    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
-    print(json.dumps(summary, indent=2))
+    (out_dir / "summary.json").write_text(
+        json.dumps(run_summary, indent=2), encoding="utf-8"
+    )
+    print(json.dumps(run_summary, indent=2))
 
 
 if __name__ == "__main__":
