@@ -1,4 +1,4 @@
-# MechInterp2.0
+# Understanding Code-Switching in Multilingual LLMs through Mechanistic Interpretability
 
 This repository's main workflow is a code-switching mechanistic-interpretability
 pipeline built around:
