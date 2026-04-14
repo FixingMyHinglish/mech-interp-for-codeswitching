@@ -1,120 +1,130 @@
-# Code-Switch vs Language-Confusion Mech-Interp Pipeline
+# MechInterp2.0
 
-This project compares internal LLM behavior across multiple text conditions within shared domains, including:
+This repository's main workflow is a code-switching mechanistic-interpretability
+pipeline built around:
 
-- `english`
-- `target_language`
-- `code_switched`
-- `confused`
+- `scripts/run_pipeline.py`: the main command-line entrypoint.
+- `pipeline/`: the reusable analysis, modeling, IO, concept-metric, and plotting helpers used by the main script.
+- `config.yaml`: the run configuration file.
 
-It uses Tuned Lens (when available) plus activation/attention/neuron-proxy metrics.
+The `experiments/` directory contains separate experiment-specific code. Those
+folders are intentionally self-contained.
 
-## What You Get
+## Repository Layout
 
-For each run, outputs are written under `outputs/<run_name>/`:
+- `data/`: cleaned Hindi-English and French-English datasets.
+- `pipeline/`: core Python package used by the main pipeline.
+- `scripts/run_pipeline.py`: main pipeline runner.
+- `scripts/`: supporting utilities for dataset checks, activation exports, comparisons,  and visualization.
+- `config.yaml`: example/default run configuration.
+- `experiments/`: standalone experiments, documented inside their own folders.
 
-- `tables/layer_metrics_raw.csv`
-- `tables/attention_entropy_raw.csv`
-- `tables/neuron_proxy_raw.csv`
-- `tables/layer_metrics_diff.csv` (each condition vs reference)
-- `tables/attention_diff.csv` (each condition vs reference)
-- `tables/neuron_diff.csv` (each condition vs reference)
-- `tables/summary.csv` (global deltas vs reference)
-- `tables/pairwise_summary.csv` (all-condition pairwise deltas)
-- `tables/neuron_events.csv` (per-sample per-layer top-neuron events)
-- `tables/neuron_tendency.csv` (aggregated neuron firing tendencies)
-- `tables/sample_neuron_contrast.csv` (per source sample: neuron activations across conditions + deltas)
-- `tables/sample_layer_condition_distance.csv` (per source sample/layer: cosine & top-neuron overlap across condition pairs)
-- `text_exports/neuron_events.jsonl`
-- `text_exports/neuron_tendency.jsonl`
-- `text_exports/full_neuron_activations.jsonl` (optional; very large)
-- `text_exports/IMPORTANT_NUMBERS.txt`
-- `figures/layer_metric_deltas.html`
-- `figures/attention_entropy_heatmap_<condition>_vs_<reference>.html`
-- `figures/neuron_shift_top100_<condition>_vs_<reference>.html`
-- `figures/neuron_layer_heatmap_absolute_<condition>.html`
-- `figures/neuron_layer_3d_absolute_<condition>.html`
-- `figures/neuron_layer_heatmap_<condition>_vs_<reference>.html`
-- `figures/neuron_layer_3d_<condition>_vs_<reference>.html`
-- `figures/domain_metric_heatmap_<condition>_vs_<reference>.html`
-- `SUMMARY.md`
-- `metadata.json`
+## Data Format
 
-## Input Format
+The pipeline accepts `.csv`, `.json`, or `.jsonl` input files. The required
+columns are:
 
-CSV/JSON/JSONL with required columns:
+- `id`: unique row identifier.
+- `text`: text shown to the model.
+- `condition`: condition label, for example `english`, `target_language`, `code_switched`, or `confused`.
+- `domain`: topic/domain label used for grouping and summary metrics.
 
-- `id`: unique identifier
-- `text`: input text
-- `condition`: condition label (`english`, `target_language`, `code_switched`, `confused`, etc.)
-- `domain`: shared-topic grouping
+The cleaned datasets currently kept in the repo are:
 
-Example: `data/text_pairs.example.csv`
+- `data/hindi.csv`
+- `data/french.csv`
+
 
 ## Setup
 
+From the repo root:
+
 ```bash
-cd "/Users/ridhi/Desktop/mech interp final"
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -U pip
-pip install -e .
+python3 -m pip install -r requirements.txt
 ```
 
 ## Configure
 
-```bash
-config.yaml
+Edit `config.yaml` before running:
+
+```yaml
+model_name: "mistral-7b"
+input_path: "data/french.csv"
+output_dir: "outputs/mistral7b_french"
+device: "mps"
+max_length: 256
+batch_size: 10
+concept_column: "condition"
+topk_neurons: 100
+save_full_neuron_activations: true
+full_neuron_export_gzip: true
+full_neuron_round_decimals: 3
+full_neuron_topk_per_layer: 256
+full_neuron_sample_stride: 1
+full_neuron_min_layer_exclusive: 19
 ```
 
-Main fields:
+Important config fields:
 
-- `model_name`: Hugging Face CausalLM identifier
-- `input_path`: dataset path
-- `output_dir`: run output folder
-- `device`: `auto`, `cpu`, `cuda`, or `mps`
-- `max_length`: token truncation limit
-- `tuned_lens_resource_id`: optional lens checkpoint override
-- `topk_neurons`: how many neuron-proxy units to keep per layer
-- `reference_condition`: optional baseline condition (recommended: `english`)
-- `log_level`: logging verbosity (`DEBUG`, `INFO`, `WARNING`, `ERROR`)
-- `log_every_n_samples`: emit per-sample progress log every N samples
-- `save_full_neuron_activations`: stream full per-layer neuron vectors per sample to JSONL
-- `full_neuron_reduce_mode`: token reduction for neuron vectors (`mean_abs`, `mean`, `max_abs`)
-- `full_neuron_export_gzip`: write `full_neuron_activations.jsonl.gz` instead of plain JSONL
-- `full_neuron_round_decimals`: round neuron values to reduce file size
-- `full_neuron_layers`: optional list of layers to keep in full activation export
-- `full_neuron_min_layer_exclusive`: keep only layers strictly greater than this value
-- `full_neuron_topk_per_layer`: if >0, save sparse top-k neurons per layer instead of full vectors
-- `full_neuron_sample_stride`: only export every Nth sample for the full activation file
-
-If `reference_condition` is omitted, the pipeline auto-picks a condition containing `english`, else first alphabetically.
+- `model_name`: Hugging Face causal language model identifier.
+- `input_path`: dataset path.
+- `output_dir`: where tables, figures, text exports, and metadata are written.
+- `device`: `auto`, `cpu`, `cuda`, or `mps`.
+- `max_length`: token truncation length.
+- `topk_neurons`: number of neuron-proxy units kept per layer for summary outputs.
+- `reference_condition`: optional baseline condition; if omitted, the pipeline prefers a condition containing `english`.
+- `save_full_neuron_activations`: whether to export per-sample, per-layer neuron activation summaries.
+- `full_neuron_topk_per_layer`: if greater than zero, saves sparse top-k neuron activations per layer instead of full dense vectors.
+- `concept_column`: dataset column used for concept-level metrics, usually `domain` or `condition`.
+- `compute_concept_metrics`: whether to run concept selectivity, purity, classifier, and clustering summaries.
 
 ## Run
 
+Run the main pipeline:
+
 ```bash
- python scripts/run_pipeline.py --config config.yaml
+python3 scripts/run_pipeline.py --config config.yaml
 ```
 
-## Notes
+## Main Outputs
 
-- Neuron stats are MLP-neuron proxies when architecture allows (`up_proj`/`c_fc`/`fc_in`/`gate_proj`), otherwise hidden-dimension salience.
-- If Tuned Lens is unavailable for your model, the pipeline falls back to logit-lens-like probing so analyses still run.
+Each run writes outputs under the configured `output_dir`, usually
+`outputs/<run_name>/`.
 
-- `tables/concept_selectivity.csv` (neuron-concept selectivity: diff/ratio/effect-size/KL)
-- `tables/concept_purity.csv` (top-activation concept purity/entropy per neuron)
-- `tables/concept_layer_density.csv` (fraction of concept-associated neurons per layer)
-- `tables/concept_classifier_summary.csv` (concept prediction from neuron activations: accuracy/F1/AUC)
+Common tables:
+
+- `tables/layer_metrics_raw.csv`
+- `tables/attention_entropy_raw.csv`
+- `tables/neuron_proxy_raw.csv`
+- `tables/layer_metrics_diff.csv`
+- `tables/attention_diff.csv`
+- `tables/neuron_diff.csv`
+- `tables/summary.csv`
+- `tables/pairwise_summary.csv`
+- `tables/neuron_events.csv`
+- `tables/neuron_tendency.csv`
+- `tables/sample_neuron_contrast.csv`
+- `tables/sample_layer_condition_distance.csv`
+
+Concept-metric tables, when enabled:
+
+- `tables/concept_selectivity.csv`
+- `tables/concept_purity.csv`
+- `tables/concept_layer_density.csv`
+- `tables/concept_classifier_summary.csv`
 - `tables/concept_classifier_per_class.csv`
-- `tables/concept_clustering_summary.csv` (cluster/silhouette over neuron concept profiles)
-- `tables/concept_hierarchy_consistency.csv` (if hierarchy CSV provided)
-- `tables/concept_functional_effects.csv` (ablation/boost/inhibit NLL deltas; optional heavy)
-- `text_exports/CONCEPT_METRICS_SUMMARY.txt`
-- `concept_column`: dataset column to treat as concept label (default `domain`)
-- `compute_concept_metrics`: compute concept association/selectivity/classifier/structure metrics
-- `concept_top_n_purity`: top-N activations used for purity/entropy
-- `concept_classifier_test_size`: test split fraction for concept prediction metric
-- `concept_hierarchy_path`: optional CSV (`child,parent`) for hierarchical consistency metric
-- `compute_concept_functional_tests`: run functional ablation/boost/inhibit tests (expensive)
-- `concept_functional_topk_neurons`: top selective neurons per concept for functional tests
-- `concept_functional_max_samples`: sample cap for functional tests
+- `tables/concept_clustering_summary.csv`
+- `tables/concept_hierarchy_consistency.csv`
+- `tables/concept_functional_effects.csv`
+
+Text exports and metadata:
+
+- `text_exports/neuron_events.jsonl`
+- `text_exports/neuron_tendency.jsonl`
+- `text_exports/full_neuron_activations.jsonl.gz`, if enabled.
+- `text_exports/IMPORTANT_NUMBERS.txt`
+- `text_exports/CONCEPT_METRICS_SUMMARY.txt`, if concept metrics are enabled.
+- `SUMMARY.md`
+- `metadata.json`
+
+Figures are written under `figures/` inside the same output directory.
