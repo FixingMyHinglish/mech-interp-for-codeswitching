@@ -1,0 +1,3 @@
+cluster,mean_english,mean_code_switched,mean_target,delta_cs,delta_target,n_neurons
+1,0.136358,0.069377,0.062971,-0.066981,-0.073387,2413
+2,0.007384,0.00746,0.00793,7.6e-05,0.000546,9996
