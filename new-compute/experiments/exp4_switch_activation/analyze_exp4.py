@@ -280,6 +280,20 @@ def build_report(
                 "n_samples_switch_specific",
                 "n_samples_total",
                 "consistency_fraction",
+                # Unconditional means (all samples)
+                "mean_cs_activation",
+                "mean_eng_activation",
+                "mean_tgt_activation",
+                # Conditional means when the neuron WAS switch-specific
+                # (benchmark for CS-specific cluster characterisation)
+                "mean_cs_act_switch_on",
+                "mean_eng_act_switch_on",
+                "mean_tgt_act_switch_on",
+                # Conditional means when the neuron was NOT switch-specific
+                # (baseline / control)
+                "mean_cs_act_switch_off",
+                "mean_eng_act_switch_off",
+                "mean_tgt_act_switch_off",
             ],
             max_rows=200,
         )

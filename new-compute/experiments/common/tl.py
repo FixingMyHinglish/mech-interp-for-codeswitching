@@ -41,6 +41,8 @@ def load_tl_model(model_name: str, device: torch.device, gpu_friendly: bool = Fa
         )
     model = None
     if gpu_friendly and device.type == "cuda":
+        # On CUDA prefer bfloat16 (same dynamic range as float32, half the memory),
+        # fall back to float16 if the hardware doesn't support bfloat16.
         for dtype in [torch.bfloat16, torch.float16]:
             try:
                 model = HookedTransformer.from_pretrained(
@@ -51,6 +53,16 @@ def load_tl_model(model_name: str, device: torch.device, gpu_friendly: bool = Fa
                 break
             except Exception:
                 model = None
+    elif gpu_friendly and device.type == "mps":
+        # MPS does not support bfloat16; use float16 to halve memory usage.
+        try:
+            model = HookedTransformer.from_pretrained(
+                model_name,
+                device=str(device),
+                dtype=torch.float16,
+            )
+        except Exception:
+            model = None
     if model is None:
         model = HookedTransformer.from_pretrained(model_name, device=str(device))
     model.eval()
