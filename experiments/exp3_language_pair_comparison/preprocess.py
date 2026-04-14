@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-preprocess.py ? Tokenize dataset and label tokens with language using Lingua.
+preprocess.py  Tokenize dataset and label tokens with language using Lingua.
 
 Reads:
   - combined_dataset.csv (id, text, condition, domain)
@@ -16,7 +16,7 @@ Outputs:
     where list columns are stored as JSON strings
 
 Usage:
-  python preprocess.py --input combined_dataset.csv --model_name microsoft/Phi-3-small-8k-instruct --out combined_dataset_preprocessed_llama.csv
+  python preprocess.py --input combined_dataset.csv --model_name modelname --out combined_dataset_preprocessed_modelname.csv
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from transformers import AutoTokenizer
 from lingua import Language, LanguageDetectorBuilder
 
 
-# ?? Language config ???????????????????????????????????????????????????????????
+#  Language config 
 
 CONDITION_UNIFORM_LABEL = {
     "english": "EN",
@@ -53,13 +53,13 @@ LINGUA_TO_LABEL = {
 }
 
 
-# ?? Word-level labelling ??????????????????????????????????????????????????????
+#  Word-level labelling 
 
 def label_words(text: str, detector) -> list[tuple[int, int, str]]:
     """Label each word in text with a language label.
 
     Returns list of (start_char, end_char, label) for each word.
-    Uses Lingua on the full word string ? works for both Latin and Devanagari.
+    Uses Lingua on the full word string  works for both Latin and Devanagari.
     """
     # Split on whitespace, keeping track of character positions
     word_spans = [(m.start(), m.end(), m.group()) for m in re.finditer(r'\S+', text)]
@@ -83,7 +83,7 @@ def map_tokens_to_labels(
     """Map token char offsets to word-level language labels.
 
     For each token, find which word it overlaps with and assign that word's label.
-    Special tokens have offset (0, 0) ? they get the default label.
+    Special tokens have offset (0, 0)  they get the default label.
     """
     token_labels = []
 
@@ -111,7 +111,7 @@ def get_switch_positions(labels: list[str]) -> list[int]:
     return [i for i in range(1, len(labels)) if labels[i] != labels[i - 1]]
 
 
-# ?? Main ??????????????????????????????????????????????????????????????????????
+#  Main 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Tokenize and label dataset tokens with language.")
