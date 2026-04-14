@@ -1,36 +1,36 @@
 #!/usr/bin/env python3
 """
-exp21.py ? Language Pair Comparison (Hi-En vs Fr-En).
+exp21.py - Language Pair Comparison (Hi-En vs Fr-En).
 
 Measures two mechanistic metrics:
-  1. Neuron activation similarity  ? Jaccard + Cosine on MLP activations
-  2. Layer-wise error emergence    ? residual stream divergence at switch points
+  1. Neuron activation similarity  - Jaccard + Cosine on MLP activations
+  2. Layer-wise error emergence    - residual stream divergence at switch points
 
 Plus frequency-artifact control checks:
-  Check 2: Repeat metric 1 on balanced sentences only (45?55% matrix language tokens)
-           ? If dominance persists at equal token ratios, it's not a frequency artifact.
+  Check 2: Repeat metric 1 on balanced sentences only (4555% matrix language tokens)
+           - If dominance persists at equal token ratios, it's not a frequency artifact.
   Check 3: For English tokens embedded inside CS sentences, measure whether they activate
            more like the matrix language or like monolingual English.
-           ? If even embedded EN tokens look like the matrix language, dominance is structural.
-  Check 3b: Position-matched version of Check 3 ? same token string in CS vs pure EN.
+           - If even embedded EN tokens look like the matrix language, dominance is structural.
+  Check 3b: Position-matched version of Check 3  same token string in CS vs pure EN.
 
-Question answered: Are code-switching mechanisms language-pair-agnostic or language-specific?
+Question answered: Are code-switching mechanisms language-pair-agnostic or language-specific
 
 Outputs:
   out_dir/
-    neuron_similarity.csv          ? metric 1: per layer per condition pair
-    neuron_similarity_balanced.csv ? check 2:  same but filtered to balanced sentences
-    embedded_en_similarity.csv     ? check 3:  EN tokens inside CS vs whole-sentence mono baselines
-    aligned_en_similarity.csv      ? check 3b: same EN token in CS vs same token in pure EN (position-matched)
-    error_emergence.csv            ? metric 2: per layer divergence at switch points
-    token_ratio_stats.csv          ? distribution of matrix-language token ratios
+    neuron_similarity.csv           metric 1: per layer per condition pair
+    neuron_similarity_balanced.csv  check 2:  same but filtered to balanced sentences
+    embedded_en_similarity.csv      check 3:  EN tokens inside CS vs whole-sentence mono baselines
+    aligned_en_similarity.csv       check 3b: same EN token in CS vs same token in pure EN (position-matched)
+    error_emergence.csv             metric 2: per layer divergence at switch points
+    token_ratio_stats.csv           distribution of matrix-language token ratios
     summary.json
 
 Usage:
-  python exp21.py \\
-    --activations_dir /scratch0/jabraham/qwen_activations \\
-    --dataset_csv combined_dataset_preprocessed_qwen.csv \\
-    --out_dir /scratch0/jabraham/exp21_qwen
+  python exp3.py \\
+    --activations_dir modelname_activations \\
+    --dataset_csv combined_dataset_preprocessed_modelname.csv \\
+    --out_dir exp3_modelname
 """
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ import torch
 from tqdm import tqdm
 
 
-# ?? Args ??????????????????????????????????????????????????????????????????????
+#  Args 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Exp 21: Language pair comparison.")
@@ -60,7 +60,7 @@ def parse_args() -> argparse.Namespace:
     return p.parse_args()
 
 
-# ?? Helpers ???????????????????????????????????????????????????????????????????
+#  Helpers 
 
 def safe_id(row_id: str, condition: str) -> str:
     return f"{row_id.replace(':', '_').replace('/', '_')}_{condition}"
@@ -85,7 +85,7 @@ def cosine(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / denom) if denom > 0 else 0.0
 
 
-# ?? Condition pairs for metric 1 ??????????????????????????????????????????????
+#  Condition pairs for metric 1 
 
 PAIRS = [
     ("cs_fr",  "french",  "fr_group"),
@@ -98,7 +98,7 @@ PAIRS = [
 ]
 
 
-# ?? Token ratio utilities ?????????????????????????????????????????????????????
+#  Token ratio utilities 
 
 def compute_token_ratios(dataset_df: pd.DataFrame) -> dict[str, float]:
     """
@@ -137,10 +137,10 @@ def save_ratio_stats(token_ratios: dict[str, float], out_dir: Path) -> None:
         sub = df[df["condition"] == cond]["matrix_ratio"]
         print(f"  Token ratio [{cond}]: mean={sub.mean():.3f}  std={sub.std():.3f}  "
               f"min={sub.min():.3f}  max={sub.max():.3f}  "
-              f"balanced (0.45?0.55): {((sub >= 0.45) & (sub <= 0.55)).sum()} sentences")
+              f"balanced (0.450.55): {((sub >= 0.45) & (sub <= 0.55)).sum()} sentences")
 
 
-# ?? Metric 1 + Check 2: Neuron activation similarity ?????????????????????????
+#  Metric 1 + Check 2: Neuron activation similarity 
 
 def compute_pairwise_similarity(
     ids: list[str],
@@ -165,7 +165,7 @@ def compute_pairwise_similarity(
     n_filtered = 0
     for sid in tqdm(ids, desc=label):
 
-        # Check 2 filter ? skip if either CS condition is outside the ratio window
+        # Check 2 filter  skip if either CS condition is outside the ratio window
         if token_ratios is not None:
             fr_ratio = token_ratios.get(f"{sid}_cs_fr")
             hi_ratio = token_ratios.get(f"{sid}_cs_hi")
@@ -181,7 +181,7 @@ def compute_pairwise_similarity(
 
         n_layers = min(m.shape[0] for m in mlps.values())
         for l in range(n_layers):
-            # Mean-pool over token dimension ? single vector per layer per condition
+            # Mean-pool over token dimension  single vector per layer per condition
             vecs = {c: mlps[c][l].mean(dim=0).numpy() for c in mlps}
             for cond_a, cond_b, _ in PAIRS:
                 a, b = vecs[cond_a], vecs[cond_b]
@@ -211,7 +211,7 @@ def compute_pairwise_similarity(
     return pd.DataFrame(rows)
 
 
-# ?? Check 3b: Aligned embedded English token similarity ??????????????????????
+#  Check 3b: Aligned embedded English token similarity 
 
 def compute_aligned_embedded_similarity(
     ids: list[str],
@@ -222,7 +222,7 @@ def compute_aligned_embedded_similarity(
     """
     Check 3b (position-matched): For each English token embedded in a CS sentence,
     find the SAME token string at its position in the monolingual English sentence,
-    then compare activations directly ? same word, different surrounding context.
+    then compare activations directly  same word, different surrounding context.
 
     This eliminates Limitation 2 (whole-sentence mean baseline) by comparing
     activation of e.g. 'especially' in CS context vs 'especially' in pure EN context.
@@ -237,8 +237,8 @@ def compute_aligned_embedded_similarity(
     """
     print("\n[Check 3b] Aligned embedded English token similarity ...")
 
-    # Build lookup: (sid, cond) ? {token_string: [positions_in_cs]}
-    # and           (sid, 'english') ? {token_string: [positions_in_en]}
+    # Build lookup: (sid, cond)  {token_string: [positions_in_cs]}
+    # and           (sid, 'english')  {token_string: [positions_in_en]}
     cs_token_lookup:  dict[tuple[str,str], dict[str, list[int]]] = {}
     en_token_lookup:  dict[str, dict[str, list[int]]]            = {}
 
@@ -262,9 +262,9 @@ def compute_aligned_embedded_similarity(
                     en_pos_map.setdefault(tok, []).append(i)
             cs_token_lookup[(sid, cond)] = en_pos_map
 
-    # Accumulators: (cs_cond, comparison) ? {layer: [cosine_scores]}
-    # comparisons: 'vs_en_context'  ? EN token in CS  vs  same token in EN sentence
-    #              'vs_matrix_mean' ? EN token in CS  vs  matrix-lang mean at same layer
+    # Accumulators: (cs_cond, comparison)  {layer: [cosine_scores]}
+    # comparisons: 'vs_en_context'   EN token in CS  vs  same token in EN sentence
+    #              'vs_matrix_mean'  EN token in CS  vs  matrix-lang mean at same layer
     acc_cosine:  dict[tuple, dict[int, list[float]]] = {}
     acc_jaccard: dict[tuple, dict[int, list[float]]] = {}
     acc_ntokens: dict[tuple, dict[int, list[int]]]   = {}
@@ -368,7 +368,7 @@ def compute_aligned_embedded_similarity(
     return pd.DataFrame(rows)
 
 
-# ?? Check 3: Embedded English token similarity ????????????????????????????????
+#  Check 3: Embedded English token similarity 
 
 def compute_embedded_token_similarity(
     ids: list[str],
@@ -378,11 +378,11 @@ def compute_embedded_token_similarity(
 ) -> pd.DataFrame:
     """
     Check 3: For English tokens that appear INSIDE a CS sentence, do their
-    MLP activations look more like monolingual English or the matrix language?
+    MLP activations look more like monolingual English or the matrix language
 
     Compares per layer:
-      EN-tokens-in-cs_hi  vs  monolingual_english  ? high = language-agnostic
-      EN-tokens-in-cs_hi  vs  monolingual_hindi    ? high = matrix dominates even EN tokens
+      EN-tokens-in-cs_hi  vs  monolingual_english   high = language-agnostic
+      EN-tokens-in-cs_hi  vs  monolingual_hindi     high = matrix dominates even EN tokens
       EN-tokens-in-cs_fr  vs  monolingual_english
       EN-tokens-in-cs_fr  vs  monolingual_french
 
@@ -392,7 +392,7 @@ def compute_embedded_token_similarity(
     """
     print("\n[Check 3] Embedded English token similarity ...")
 
-    # Build lookup: (sid, cond) ? list of token indices labelled EN
+    # Build lookup: (sid, cond)  list of token indices labelled EN
     en_positions: dict[tuple[str, str], list[int]] = {}
     cs_df = dataset_df[dataset_df["condition"].isin(["cs_fr", "cs_hi"])]
     for _, row in cs_df.iterrows():
@@ -405,13 +405,13 @@ def compute_embedded_token_similarity(
 
     CONDITIONS = ["english", "french", "hindi"]
 
-    # Accumulators: (cs_cond, baseline_cond) ? {layer: [scores]}
+    # Accumulators: (cs_cond, baseline_cond)  {layer: [scores]}
     jaccard_acc: dict[tuple, dict[int, list[float]]] = {}
     cosine_acc:  dict[tuple, dict[int, list[float]]] = {}
 
     comparison_pairs = [
-        ("cs_hi", "english"),  # embedded EN vs mono EN ? should be high if agnostic
-        ("cs_hi", "hindi"),    # embedded EN vs mono HI ? high = matrix dominates
+        ("cs_hi", "english"),  # embedded EN vs mono EN  should be high if agnostic
+        ("cs_hi", "hindi"),    # embedded EN vs mono HI  high = matrix dominates
         ("cs_fr", "english"),
         ("cs_fr", "french"),
     ]
@@ -473,7 +473,7 @@ def compute_embedded_token_similarity(
     return pd.DataFrame(rows)
 
 
-# ?? Metric 2: Layer-wise error emergence ??????????????????????????????????????
+#  Metric 2: Layer-wise error emergence 
 
 def compute_error_emergence(
     ids: list[str],
@@ -482,7 +482,7 @@ def compute_error_emergence(
 ) -> pd.DataFrame:
     """
     At each layer, compute L2 distance between cs and english residual stream
-    specifically at switch token positions ? not averaged across whole sentence.
+    specifically at switch token positions  not averaged across whole sentence.
 
     This shows where in the network the model's internal state diverges from
     monolingual English specifically at the moment of switching.
@@ -537,7 +537,7 @@ def compute_error_emergence(
     return pd.DataFrame(rows)
 
 
-# ?? Load switch positions ?????????????????????????????????????????????????????
+#  Load switch positions 
 
 def load_switch_positions(dataset_df: pd.DataFrame) -> dict[str, dict[str, list[int]]]:
     result: dict[str, dict[str, list[int]]] = {}
@@ -550,7 +550,7 @@ def load_switch_positions(dataset_df: pd.DataFrame) -> dict[str, dict[str, list[
     return result
 
 
-# ?? Summary ???????????????????????????????????????????????????????????????????
+#  Summary 
 
 def pair_stats(sim_df: pd.DataFrame, cond_a: str, cond_b: str) -> dict:
     sub = sim_df[sim_df["pair"] == f"{cond_a}_vs_{cond_b}"]
@@ -664,13 +664,13 @@ def build_summary(
             "note": "Position-matched comparison: same EN token string extracted from CS context "
                     "vs the identical token in the monolingual English sentence. "
                     "Eliminates whole-sentence mean baseline confound. "
-                    "vs_en_context: how much does CS context shift EN token activations away from pure EN? "
-                    "vs_matrix_mean: how much do shifted EN tokens resemble the matrix language?",
+                    "vs_en_context: how much does CS context shift EN token activations away from pure EN "
+                    "vs_matrix_mean: how much do shifted EN tokens resemble the matrix language",
             "cs_hi": {
                 "EN_tok_CS_vs_EN_context":    aligned_stats(aln_df, "cs_hi", "vs_en_context"),
                 "EN_tok_CS_vs_matrix_mean":   aligned_stats(aln_df, "cs_hi", "vs_matrix_mean"),
                 "interpretation": "If vs_matrix_mean > vs_en_context in late layers: "
-                                  "Hindi context pulls EN token activations toward Hindi ? structural matrix dominance.",
+                                  "Hindi context pulls EN token activations toward Hindi  structural matrix dominance.",
             },
             "cs_fr": {
                 "EN_tok_CS_vs_EN_context":    aligned_stats(aln_df, "cs_fr", "vs_en_context"),
@@ -682,7 +682,7 @@ def build_summary(
         "check3_embedded_english_tokens": {
             "note": "Activations of EN tokens inside CS sentences vs monolingual baselines. "
                     "If EN-in-cs_hi is more similar to Hindi than English, "
-                    "the matrix language dominates even individual embedded tokens ? "
+                    "the matrix language dominates even individual embedded tokens  "
                     "ruling out frequency as an explanation.",
             "cs_hi": {
                 "EN_tokens_vs_english": embedded_stats(emb_df, "cs_hi", "english"),
@@ -710,7 +710,7 @@ def build_summary(
     }
 
 
-# ?? Main ??????????????????????????????????????????????????????????????????????
+#  Main 
 
 def main() -> None:
     args         = parse_args()
@@ -741,7 +741,7 @@ def main() -> None:
 
     # Check 2: balanced sentences only
     print(f"\n[Check 2] Re-running on balanced sentences "
-          f"(matrix ratio {args.balance_ratio_min}?{args.balance_ratio_max}) ...")
+          f"(matrix ratio {args.balance_ratio_min}{args.balance_ratio_max}) ...")
     sim_df_balanced = compute_pairwise_similarity(
         ids, mlp_dir, args.activation_threshold,
         token_ratios=token_ratios,
