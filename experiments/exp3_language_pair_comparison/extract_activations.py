@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-extract_activations.py ? Run inference and save MLP + residual activations.
+extract_activations.py  Run inference and save MLP + residual activations.
 
 Saves per sentence+condition (one .pt file each):
   - mlp/{id}_{condition}.pt       : MLP post-activations  [n_layers, n_tokens, d_mlp]
@@ -13,9 +13,9 @@ All tensors saved in fp16.
 
 Usage:
   python extract_activations.py \\
-    --input combined_dataset_preprocessed_qwen.csv \\
-    --model_name Qwen/Qwen2-7B-Instruct \\
-    --out_dir /scratch0/jabraham/qwen_activations \\
+    --input combined_dataset_preprocessed_modelname.csv \\
+    --model_name modelname \\
+    --out_dir modelname_activations \\
     --device cuda
 """
 from __future__ import annotations
@@ -182,7 +182,7 @@ def main() -> None:
     print(f"  Layers : {len(model.model.layers)}")
     print(f"  d_model: {model.config.hidden_size}")
 
-    print(f"\nExtracting activations ? {out_dir}")
+    print(f"\nExtracting activations  {out_dir}")
     skipped = 0
     for _, row in tqdm(df.iterrows(), total=len(df), desc="Extracting"):
         fname = safe_id(str(row["id"]), str(row["condition"]))
