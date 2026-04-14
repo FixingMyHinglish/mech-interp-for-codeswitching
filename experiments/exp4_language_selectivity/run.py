@@ -21,9 +21,12 @@ from common import (  # noqa: E402
     encode_text,
     extract_post_activations,
     format_offset,
+    infer_target_language_code_fasttext,
     infer_target_script,
+    label_token_language_fasttext,
     label_token_language,
     load_dataset,
+    load_fasttext_model,
     load_tl_model,
     resolve_device,
     write_neuron_heatmap,
@@ -44,6 +47,29 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_length", type=int, default=256)
     p.add_argument("--focus_condition", default="code_switched")
     p.add_argument("--target_label", default="target_language")
+    p.add_argument(
+        "--language_id_method",
+        choices=["fasttext", "script"],
+        default="fasttext",
+        help=(
+            "Token language labeling method. Use `fasttext` for same-script language pairs "
+            "(e.g., French-English). Use `script` for script-separated pairs."
+        ),
+    )
+    p.add_argument(
+        "--fasttext_model_path",
+        default=None,
+        help=(
+            "Path to FastText language ID model (e.g., lid.176.bin). "
+            "Required when --language_id_method fasttext."
+        ),
+    )
+    p.add_argument(
+        "--fasttext_min_prob",
+        type=float,
+        default=0.35,
+        help="Minimum FastText confidence for labeling token as english/target (default: 0.35).",
+    )
     p.add_argument("--token_offsets", nargs="+", type=int, default=[-1, 0, 1])
     p.add_argument("--selectivity_threshold", type=float, default=0.5)
     p.add_argument("--top_k", type=int, default=50)
@@ -99,7 +125,24 @@ def main() -> None:
     )
     tokenizer = model.tokenizer
 
-    target_script = infer_target_script(df, target_label=args.target_label)
+    target_script = "n/a"
+    target_lang_code = "unknown"
+    fasttext_model = None
+    token_label_cache: dict[str, str] = {}
+    if args.language_id_method == "script":
+        target_script = infer_target_script(df, target_label=args.target_label)
+    else:
+        if not args.fasttext_model_path:
+            raise ValueError(
+                "--fasttext_model_path is required when --language_id_method fasttext "
+                "(example: --fasttext_model_path /path/to/lid.176.bin)"
+            )
+        fasttext_model = load_fasttext_model(args.fasttext_model_path)
+        target_lang_code = infer_target_language_code_fasttext(
+            df,
+            target_label=args.target_label,
+            model=fasttext_model,
+        )
     focus_df = df[df["condition"] == args.focus_condition].copy()
     if args.max_groups is not None:
         focus_df = focus_df.head(max(1, int(args.max_groups)))
@@ -123,7 +166,20 @@ def main() -> None:
             continue
 
         token_texts = tokenizer.convert_ids_to_tokens(ids)
-        token_labels = [label_token_language(tok, target_script=target_script) for tok in token_texts]
+        if args.language_id_method == "script":
+            token_labels = [label_token_language(tok, target_script=target_script) for tok in token_texts]
+        else:
+            token_labels = []
+            for tok in token_texts:
+                if tok not in token_label_cache:
+                    token_label_cache[tok] = label_token_language_fasttext(
+                        tok,
+                        model=fasttext_model,
+                        target_lang_code=target_lang_code,
+                        english_lang_code="en",
+                        min_prob=float(args.fasttext_min_prob),
+                    )
+                token_labels.append(token_label_cache[tok])
         switch_points = _find_switch_points(token_labels)
         if not switch_points:
             continue
@@ -266,7 +322,11 @@ def main() -> None:
         "model_name": str(args.model_name),
         "focus_condition": str(args.focus_condition),
         "target_label": str(args.target_label),
+        "language_id_method": str(args.language_id_method),
+        "fasttext_model_path": str(args.fasttext_model_path) if args.fasttext_model_path else None,
+        "fasttext_min_prob": float(args.fasttext_min_prob),
         "target_script_inferred": target_script,
+        "target_language_code_inferred": target_lang_code,
         "token_offsets": [int(x) for x in args.token_offsets],
         "selectivity_threshold": float(args.selectivity_threshold),
         "top_k": int(args.top_k),

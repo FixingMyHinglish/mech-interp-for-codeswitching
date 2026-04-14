@@ -19,6 +19,30 @@ python new-compute/experiments/exp6_language_selectivity/run.py \
   --device cpu
 ```
 
+For same-script language pairs (e.g., French-English), use FastText token labeling:
+
+```bash
+python3 new-compute/experiments/exp6_language_selectivity/run.py \
+  --dataset_csv data/french.csv \
+  --model_name gpt2 \
+  --out_dir new-compute/experiments/exp6_language_selectivity/results_french_gpt2_mps \
+  --device mps \
+  --language_id_method fasttext \
+  --fasttext_model_path /absolute/path/to/lid.176.bin \
+  --fasttext_min_prob 0.35
+```
+
+If you do not have FastText available, you can force script-based labeling:
+
+```bash
+python3 new-compute/experiments/exp6_language_selectivity/run.py \
+  --dataset_csv data/hindi.csv \
+  --model_name gpt2 \
+  --out_dir new-compute/experiments/exp6_language_selectivity/results_hindi \
+  --device cpu \
+  --language_id_method script
+```
+
 GPU-friendly mode:
 
 ```bash
