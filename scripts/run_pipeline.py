@@ -13,11 +13,11 @@ from tqdm import tqdm
 
 # Allow running as `python scripts/run_pipeline.py` without setting PYTHONPATH.
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-SRC_DIR = PROJECT_ROOT / "src"
+SRC_DIR = PROJECT_ROOT 
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from mechinterp_pipeline.analysis import (
+from pipeline.analysis import (
     aggregate_attention_metrics,
     aggregate_layer_metrics,
     aggregate_neuron_metrics,
@@ -26,10 +26,10 @@ from mechinterp_pipeline.analysis import (
     build_neuron_event_table,
     compare_conditions,
 )
-from mechinterp_pipeline.concept_metrics import compute_all_concept_metrics
-from mechinterp_pipeline.io_utils import ensure_dirs, load_config, load_dataset
-from mechinterp_pipeline.modeling import analyze_text, prepare_model_and_lens
-from mechinterp_pipeline.visualize import (
+from pipeline.concept_metrics import compute_all_concept_metrics
+from pipeline.io_utils import ensure_dirs, load_config, load_dataset
+from pipeline.modeling import analyze_text, prepare_model_and_lens
+from pipeline.visualize import (
     plot_domain_metric_heatmap,
     plot_domain_metric_heatmap_absolute,
     plot_attention_heatmap,
