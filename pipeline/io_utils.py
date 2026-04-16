@@ -80,7 +80,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         ),
         full_neuron_topk_per_layer=int(raw.get("full_neuron_topk_per_layer", 0)),
         full_neuron_sample_stride=max(1, int(raw.get("full_neuron_sample_stride", 1))),
-        concept_column=str(raw.get("concept_column", "domain")),
+        concept_column=str(raw.get("concept_column", "condition")),
         compute_concept_metrics=bool(raw.get("compute_concept_metrics", True)),
         concept_top_n_purity=int(raw.get("concept_top_n_purity", 50)),
         concept_classifier_test_size=float(raw.get("concept_classifier_test_size", 0.2)),

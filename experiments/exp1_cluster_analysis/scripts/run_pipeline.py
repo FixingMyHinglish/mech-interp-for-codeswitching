@@ -7,9 +7,9 @@ import argparse
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
+# REPO_ROOT = Path(__file__).resolve().parents[0]
+# if str(REPO_ROOT) not in sys.path:
+#     sys.path.insert(0, str(REPO_ROOT))
 
 from convert_to_bundle import main as convert_main  # noqa: E402
 from make_neuron_summaries import main as summaries_main  # noqa: E402

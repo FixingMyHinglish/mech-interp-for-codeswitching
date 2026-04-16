@@ -15,14 +15,14 @@ or automatically by:
 ## How to run cluster analysis
 ### Manual `k`
 ```bash
-python3 mech_interp/models/pipeline/cluster_analysis.py \
+python3 experiments/exp1_cluster_analysis/scripts/cluster_analysis.py \
   --work_dir mech_interp/models/llama/french \
   --layer_num 31 \
   --k 2
 ```
 ### Auto-select `k` with silhouette score
 ```bash
-python3 mech_interp/models/pipeline/cluster_analysis.py \
+python3 experiments/exp1_cluster_analysis/scripts/cluster_analysis.py \
   --work_dir mech_interp/models/llama/french \
   --layer_num 31 \
   --auto_k \
@@ -31,7 +31,7 @@ python3 mech_interp/models/pipeline/cluster_analysis.py \
 ```
 ### Change linkage method
 ```bash
-python3 mech_interp/models/pipeline/cluster_analysis.py \
+python3 experiments/exp1_cluster_analysis/scripts/cluster_analysis.py \
   --work_dir mech_interp/models/mistral/french \
   --layer_num 31 \
   --auto_k \
@@ -63,7 +63,7 @@ The README contains:
 ## Run the full pipeline
 If you want to build everything from the raw sparse export and then cluster the final layer automatically:
 ```bash
-python3 mech_interp/models/pipeline/run_pipeline.py \
+python3 experiments/exp1_cluster_analysis/scripts/run_pipeline.py \
   --work_dir mech_interp/models/llama/french \
   --topk_per_layer 0 \
   --auto_k
@@ -83,14 +83,14 @@ This runs:
 ## Typical workflow
 If you already have `03_cleaned/layer_XX_neuron_summary.csv`:
 ```bash
-python3 mech_interp/models/pipeline/cluster_analysis.py \
+python3 experiments/exp1_cluster_analysis/scripts/cluster_analysis.py \
   --work_dir mech_interp/models/qwen/hindi \
   --layer_num 27 \
   --auto_k
 ```
 If you only have the raw export:
 ```bash
-python3 mech_interp/models/pipeline/run_pipeline.py \
+python3 experiments/exp1_cluster_analysis/scripts/run_pipeline.py \
   --work_dir mech_interp/models/qwen/hindi \
   --topk_per_layer 0 \
   --auto_k

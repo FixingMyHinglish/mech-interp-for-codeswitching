@@ -1,12 +1,15 @@
 torch>=2.2
 transformers>=4.44
 accelerate>=0.34
-tuned-lens>=0.2
+transformer_lens>=0.2
 pandas>=2.2
 numpy>=1.26
 plotly>=5.24
 pyyaml>=6.0
 tqdm>=4.66
 scipy>=1.13
+matplotlib>=3.8
+seaborn>=0.13
+fasttext>=0.9
 
 scikit-learn>=1.5

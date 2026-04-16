@@ -38,7 +38,7 @@ from common import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Experiment 4: switch-point neuron activation patterns. "
+            "Experiment 2: switch-point neuron activation patterns. "
             "For each sample, identifies neurons that are more active in the "
             "code-switched version than in EVERY monolingual baseline at the switch "
             "point. Reports neurons that show this pattern consistently across samples."
@@ -46,7 +46,7 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--dataset_csv", required=True, help="Dataset CSV with id/text/condition/domain/source_id.")
     p.add_argument("--model_name", required=True, help="Hugging Face model name for TransformerLens.")
-    p.add_argument("--out_dir", default="new-compute/experiments/exp4_switch_activation/results")
+    p.add_argument("--out_dir", default="experiments/exp2_switch_point_activations/results")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     p.add_argument("--max_length", type=int, default=256)
     p.add_argument("--focus_condition", default="code_switched")
@@ -959,7 +959,7 @@ def main() -> None:
     # Run summary JSON.
     # ------------------------------------------------------------------
     run_summary = {
-        "experiment": "exp4_switch_activation",
+        "experiment": "exp2_switch_point_activations",
         "dataset_csv": str(args.dataset_csv),
         "model_name": str(args.model_name),
         "focus_condition": str(args.focus_condition),

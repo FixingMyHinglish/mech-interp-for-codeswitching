@@ -36,13 +36,13 @@ from common import (  # noqa: E402
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description=(
-            "Experiment 6: language-selective neurons in code-switched text "
+            "Experiment 4: language-selective neurons in code-switched text "
             "using switch-window token activations."
         )
     )
     p.add_argument("--dataset_csv", required=True)
     p.add_argument("--model_name", required=True)
-    p.add_argument("--out_dir", default="new-compute/experiments/exp6_language_selectivity/results")
+    p.add_argument("--out_dir", default="experiments/exp4_language_selectivity/results")
     p.add_argument("--device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
     p.add_argument("--max_length", type=int, default=256)
     p.add_argument("--focus_condition", default="code_switched")
@@ -317,7 +317,7 @@ def main() -> None:
             )
 
     summary = {
-        "experiment": "exp6_language_selectivity",
+        "experiment": "exp4_language_selectivity",
         "dataset_csv": str(args.dataset_csv),
         "model_name": str(args.model_name),
         "focus_condition": str(args.focus_condition),

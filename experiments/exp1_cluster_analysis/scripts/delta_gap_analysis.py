@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from mech_interp.models.pipeline import cluster_analysis as ca
+import cluster_analysis as ca
 
 warnings.filterwarnings("ignore")
 
