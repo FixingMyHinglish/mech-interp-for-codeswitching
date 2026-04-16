@@ -67,8 +67,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from mechinterp_pipeline.io_utils import load_config, load_dataset
-from mechinterp_pipeline.modeling import prepare_model_and_lens
+from pipeline.io_utils import load_config, load_dataset
+from pipeline.modeling import prepare_model_and_lens
 
 logger = logging.getLogger("causal_analysis")
 

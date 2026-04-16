@@ -5,7 +5,6 @@ import argparse
 import gzip
 import json
 import logging
-import subprocess
 import sys
 from pathlib import Path
 
@@ -51,218 +50,10 @@ def parse_args() -> argparse.Namespace:
         description="Compare LLM internals for code-switched vs language-confused text using Tuned Lens"
     )
     p.add_argument("--config", help="Path to YAML config")
-    p.add_argument(
-        "--new-compute-only",
-        action="store_true",
-        help="Run only new-compute (and optional visuals) without running the main pipeline.",
-    )
-    p.add_argument(
-        "--new-compute-run-dir",
-        default=None,
-        help="Pipeline output directory containing tables/neuron_proxy_raw.csv.",
-    )
-    p.add_argument(
-        "--new-compute-out-dir",
-        default=None,
-        help="Output directory for new-compute tables. If omitted and --config is set, derives from config output_dir.",
-    )
-    p.add_argument(
-        "--new-compute-selection-backend",
-        default="transformer_lens",
-        choices=["transformer_lens", "pipeline_proxy"],
-        help="Backend used for neuron selection in compute_condition_specific_neurons.py.",
-    )
-    p.add_argument("--new-compute-model-name", default=None, help="Optional model override for TL selection backend.")
-    p.add_argument("--new-compute-device", default="auto", choices=["auto", "cpu", "cuda", "mps"])
-    p.add_argument("--new-compute-max-length", type=int, default=256)
-    p.add_argument(
-        "--new-compute-reduce-mode",
-        default="mean_abs",
-        choices=["mean_abs", "mean", "max_abs"],
-    )
-    p.add_argument("--new-compute-activation-cutoff", type=float, default=0.0)
-    p.add_argument("--new-compute-importance-quantile", type=float, default=0.90)
-    p.add_argument("--new-compute-importance-min", type=float, default=None)
-    p.add_argument("--new-compute-min-domain-consistency", type=float, default=0.50)
-    p.add_argument("--new-compute-cs-label", default="code_switched")
-    p.add_argument("--new-compute-confused-label", default="confused")
-    p.add_argument("--new-compute-english-label", default="english")
-    p.add_argument("--new-compute-target-label", default="target_language")
-    p.add_argument(
-        "--new-compute-with-visuals",
-        action="store_true",
-        help="If set, run new-compute visuals after the new-compute tables are built.",
-    )
-    p.add_argument("--new-compute-dataset-csv", default=None, help="Dataset path for visualization script.")
-    p.add_argument(
-        "--new-compute-visual-out-dir",
-        default=None,
-        help="Output directory for new-compute visuals. If omitted and --config is set, derives from config output_dir.",
-    )
-    p.add_argument("--new-compute-visual-samples", type=int, default=5)
-    p.add_argument(
-        "--new-compute-overall-sample-cap",
-        type=int,
-        default=0,
-        help="Max rows per condition for aggregate visuals (0 means all rows per condition).",
-    )
-    p.add_argument("--new-compute-attention-layer", type=int, default=0)
-    p.add_argument(
-        "--new-compute-visual-backend",
-        default="hf",
-        choices=["hf", "transformer_lens"],
-        help="Backend used by new-compute visualization script.",
-    )
-    p.add_argument(
-        "--new-compute-target-mode",
-        default="predicted_next_token",
-        choices=["predicted_next_token", "observed_next_token"],
-    )
     args = p.parse_args()
-
-    if args.new_compute_only:
-        if args.new_compute_with_visuals and not args.new_compute_dataset_csv and not args.config:
-            p.error(
-                "--new-compute-dataset-csv is required for --new-compute-with-visuals "
-                "unless --config is provided."
-            )
-    else:
-        if not args.config:
-            p.error("--config is required unless --new-compute-only is set.")
+    if not args.config:
+        p.error("--config is required unless --new-compute-only is set.")
     return args
-
-
-def _resolve_new_compute_paths(
-    args: argparse.Namespace,
-) -> tuple[Path | None, Path, Path | None, Path | None]:
-    cfg = load_config(args.config) if args.config else None
-
-    run_dir = Path(args.new_compute_run_dir) if args.new_compute_run_dir else (cfg.output_dir if cfg else None)
-    if run_dir is None and args.new_compute_selection_backend == "pipeline_proxy":
-        raise ValueError(
-            "Could not resolve run_dir for pipeline_proxy backend. "
-            "Provide --new-compute-run-dir or pass --config with output_dir."
-        )
-
-    if args.new_compute_out_dir:
-        out_dir = Path(args.new_compute_out_dir)
-    elif cfg is not None and run_dir is not None:
-        out_dir = PROJECT_ROOT / "new-compute" / f"results_{run_dir.name}"
-    else:
-        out_dir = PROJECT_ROOT / "new-compute" / "results"
-
-    need_dataset = args.new_compute_with_visuals or args.new_compute_selection_backend == "transformer_lens"
-    dataset_csv: Path | None = None
-    if need_dataset:
-        dataset_csv = Path(args.new_compute_dataset_csv) if args.new_compute_dataset_csv else (cfg.input_path if cfg else None)
-        if dataset_csv is None:
-            raise ValueError(
-                "Could not resolve dataset_csv. Provide --new-compute-dataset-csv "
-                "or pass --config with input_path."
-            )
-
-    if not args.new_compute_with_visuals:
-        return run_dir, out_dir, dataset_csv, None
-
-    if args.new_compute_visual_out_dir:
-        visual_out_dir = Path(args.new_compute_visual_out_dir)
-    elif cfg is not None and run_dir is not None:
-        visual_out_dir = PROJECT_ROOT / "new-compute" / f"visuals_{run_dir.name}"
-    else:
-        visual_out_dir = PROJECT_ROOT / "new-compute" / "visuals"
-
-    if run_dir is None:
-        raise ValueError(
-            "run_dir is required when --new-compute-with-visuals is set. "
-            "Provide --new-compute-run-dir or --config with output_dir."
-        )
-
-    return run_dir, out_dir, dataset_csv, visual_out_dir
-
-
-def _run_new_compute_only(args: argparse.Namespace) -> tuple[Path, Path | None]:
-    run_dir, out_dir, dataset_csv, visual_out_dir = _resolve_new_compute_paths(args)
-    resolved_model_name = args.new_compute_model_name
-    if resolved_model_name is None and args.config:
-        try:
-            resolved_model_name = load_config(args.config).model_name
-        except Exception:
-            resolved_model_name = None
-
-    compute_script = PROJECT_ROOT / "new-compute" / "compute_condition_specific_neurons.py"
-    cmd = [
-        sys.executable,
-        str(compute_script),
-        "--backend",
-        str(args.new_compute_selection_backend),
-        "--out_dir",
-        str(out_dir),
-        "--activation_cutoff",
-        str(args.new_compute_activation_cutoff),
-        "--min_domain_consistency",
-        str(args.new_compute_min_domain_consistency),
-        "--cs_label",
-        str(args.new_compute_cs_label),
-        "--confused_label",
-        str(args.new_compute_confused_label),
-        "--english_label",
-        str(args.new_compute_english_label),
-        "--target_label",
-        str(args.new_compute_target_label),
-    ]
-    if run_dir is not None:
-        cmd.extend(["--run_dir", str(run_dir)])
-    if dataset_csv is not None:
-        cmd.extend(["--dataset_csv", str(dataset_csv)])
-    if resolved_model_name is not None:
-        cmd.extend(["--model_name", str(resolved_model_name)])
-    cmd.extend(
-        [
-            "--device",
-            str(args.new_compute_device),
-            "--max_length",
-            str(args.new_compute_max_length),
-            "--reduce_mode",
-            str(args.new_compute_reduce_mode),
-        ]
-    )
-    if args.new_compute_importance_min is not None:
-        cmd.extend(["--importance_min", str(args.new_compute_importance_min)])
-    else:
-        cmd.extend(["--importance_quantile", str(args.new_compute_importance_quantile)])
-
-    subprocess.run(cmd, check=True)
-
-    if args.new_compute_with_visuals:
-        viz_script = PROJECT_ROOT / "new-compute" / "visualize_new_compute.py"
-        viz_cmd = [
-            sys.executable,
-            str(viz_script),
-            "--run_dir",
-            str(run_dir),
-            "--dataset_csv",
-            str(dataset_csv),
-            "--results_dir",
-            str(out_dir),
-            "--out_dir",
-            str(visual_out_dir),
-            "--n_random_samples",
-            str(args.new_compute_visual_samples),
-            "--overall_sample_cap",
-            str(args.new_compute_overall_sample_cap),
-            "--attention_layer",
-            str(args.new_compute_attention_layer),
-            "--backend",
-            str(args.new_compute_visual_backend),
-            "--target_mode",
-            str(args.new_compute_target_mode),
-        ]
-        if resolved_model_name is not None:
-            viz_cmd.extend(["--model_name", str(resolved_model_name)])
-        subprocess.run(viz_cmd, check=True)
-        return out_dir, visual_out_dir
-
-    return out_dir, None
 
 
 def _setup_logging(level: str) -> None:
@@ -369,14 +160,6 @@ def _compress_full_neuron_layers(
 
 def main() -> None:
     args = parse_args()
-    if args.new_compute_only:
-        out_dir, visual_out_dir = _run_new_compute_only(args)
-        print(
-            "Done. New-compute-only run finished. "
-            f"Results: {out_dir}"
-            + (f" | Visuals: {visual_out_dir}" if visual_out_dir is not None else "")
-        )
-        return
 
     cfg = load_config(args.config)
     _setup_logging(cfg.log_level)

@@ -40,7 +40,7 @@ from tqdm import tqdm
 # to sys.path so the shared `common` package can be imported.
 # ---------------------------------------------------------------------------
 SCRIPT_DIR = Path(__file__).resolve().parent
-EXPERIMENTS_ROOT = SCRIPT_DIR / "experiments"
+EXPERIMENTS_ROOT = SCRIPT_DIR.parent / "experiments"
 if str(EXPERIMENTS_ROOT) not in sys.path:
     sys.path.insert(0, str(EXPERIMENTS_ROOT))
 

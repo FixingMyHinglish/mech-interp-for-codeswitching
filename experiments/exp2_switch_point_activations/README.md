@@ -1,4 +1,4 @@
-# Experiment 4: Neuron Activation Patterns at Switch Points
+# Experiment 2: Neuron Activation Patterns at Switch Points
 
 This script computes token-local switch-point activation patterns for:
 
@@ -21,7 +21,7 @@ in a window around that point, and exports:
 To disable the control comparison:
 
 ```bash
-python new-compute/experiments/exp4_switch_activation/run.py \
+python experiments/exp2_switch_point_activations/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --device cpu \
@@ -31,7 +31,7 @@ python new-compute/experiments/exp4_switch_activation/run.py \
 To tune per-sample filtering:
 
 ```bash
-python new-compute/experiments/exp4_switch_activation/run.py \
+python experiments/exp2_switch_point_activations/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --device cpu \
@@ -44,7 +44,7 @@ python new-compute/experiments/exp4_switch_activation/run.py \
 ## Run
 
 ```bash
-python new-compute/experiments/exp4_switch_activation/run.py \
+python experiments/exp2_switch_point_activations/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --out_dir new-compute/experiments/exp4_switch_activation/results_hindi \
@@ -54,7 +54,7 @@ python new-compute/experiments/exp4_switch_activation/run.py \
 GPU-friendly mode:
 
 ```bash
-python new-compute/experiments/exp4_switch_activation/run.py \
+python experiments/exp2_switch_point_activations/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --device cuda \
@@ -66,7 +66,7 @@ python new-compute/experiments/exp4_switch_activation/run.py \
 After `run.py` completes, generate a one-page analysis report:
 
 ```bash
-python3 new-compute/experiments/exp4_switch_activation/analyze_exp4.py \
+python3 experiments/exp2_switch_point_activations/analyze_exp4.py \
   --results_dir new-compute/experiments/exp4_switch_activation/results_french_gpt2_mps \
   --focus_offset 0 \
   --z_threshold 2.0 \
@@ -81,7 +81,7 @@ The analyzer now also computes a control-filtered metric for code-switch-only ne
 You can tune control filtering with:
 
 ```bash
-python3 new-compute/experiments/exp4_switch_activation/analyze_exp4.py \
+python3 experiments/exp2_switch_point_activations/analyze_exp4.py \
   --results_dir new-compute/experiments/exp4_switch_activation/results_french_gpt2_mps \
   --focus_offset 0 \
   --z_threshold 2.0 \
@@ -89,15 +89,3 @@ python3 new-compute/experiments/exp4_switch_activation/analyze_exp4.py \
   --control_abs_z_max 1.0 \
   --top_k 50
 ```
-
-This writes:
-
-- `analysis/exp4_analysis_report_offset_plus_0.md`
-- `analysis/metric1_overall_offset_plus_0.csv`
-- `analysis/metric1_layer_offset_plus_0.csv`
-- `analysis/metric2_topk_neurons_offset_plus_0.csv`
-- `analysis/metric2_topk_consensus_offset_plus_0.csv`
-- `analysis/metric3_codeswitch_specific_neurons.csv.gz`
-- `analysis/metric3_codeswitch_specific_summary_by_offset.csv`
-- `analysis/metric3_codeswitch_specific_layers_offset_plus_0.csv`
-- `analysis/metric3_topk_codeswitch_specific_offset_plus_0.csv`

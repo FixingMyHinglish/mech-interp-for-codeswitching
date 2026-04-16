@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-exp21.py - Language Pair Comparison (Hi-En vs Fr-En).
+exp3.py - Language Pair Comparison (Hi-En vs Fr-En).
 
 Measures two mechanistic metrics:
   1. Neuron activation similarity  - Jaccard + Cosine on MLP activations
@@ -47,10 +47,10 @@ from tqdm import tqdm
 #  Args 
 
 def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description="Exp 21: Language pair comparison.")
+    p = argparse.ArgumentParser(description="Exp 3: Language pair comparison.")
     p.add_argument("--activations_dir",      required=True)
     p.add_argument("--dataset_csv",          required=True)
-    p.add_argument("--out_dir",              default="results/exp21")
+    p.add_argument("--out_dir",              default="results/exp3")
     p.add_argument("--activation_threshold", type=float, default=0.0)
     p.add_argument("--max_sentences",        type=int,   default=None)
     p.add_argument("--balance_ratio_min",    type=float, default=0.45,

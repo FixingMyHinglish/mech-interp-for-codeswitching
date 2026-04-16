@@ -11,10 +11,10 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from mech_interp.models.pipeline.convert_to_bundle import main as convert_main  # noqa: E402
-from mech_interp.models.pipeline.make_neuron_summaries import main as summaries_main  # noqa: E402
-from mech_interp.models.pipeline.cluster_analysis import main as cluster_main  # noqa: E402
-from mech_interp.models.pipeline.delta_gap_analysis import main as gap_main  # noqa: E402
+from convert_to_bundle import main as convert_main  # noqa: E402
+from make_neuron_summaries import main as summaries_main  # noqa: E402
+from cluster_analysis import main as cluster_main  # noqa: E402
+from delta_gap_analysis import main as gap_main  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:

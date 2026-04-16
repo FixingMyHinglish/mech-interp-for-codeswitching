@@ -1,4 +1,4 @@
-# Experiment 6: Language-Selective Neurons
+# Experiment 4: Language-Selective Neurons
 
 This script uses token-level language labels inside `code_switched` text and
 switch-point windows to compute:
@@ -12,7 +12,7 @@ switch-point windows to compute:
 ## Run
 
 ```bash
-python new-compute/experiments/exp6_language_selectivity/run.py \
+python experiments/exp4_language_selectivity/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --out_dir new-compute/experiments/exp6_language_selectivity/results_hindi \
@@ -22,7 +22,7 @@ python new-compute/experiments/exp6_language_selectivity/run.py \
 For same-script language pairs (e.g., French-English), use FastText token labeling:
 
 ```bash
-python3 new-compute/experiments/exp6_language_selectivity/run.py \
+python3 experiments/exp4_language_selectivity/run.py \
   --dataset_csv data/french.csv \
   --model_name gpt2 \
   --out_dir new-compute/experiments/exp6_language_selectivity/results_french_gpt2_mps \
@@ -35,7 +35,7 @@ python3 new-compute/experiments/exp6_language_selectivity/run.py \
 If you do not have FastText available, you can force script-based labeling:
 
 ```bash
-python3 new-compute/experiments/exp6_language_selectivity/run.py \
+python3 experiments/exp4_language_selectivity/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --out_dir new-compute/experiments/exp6_language_selectivity/results_hindi \
@@ -46,7 +46,7 @@ python3 new-compute/experiments/exp6_language_selectivity/run.py \
 GPU-friendly mode:
 
 ```bash
-python new-compute/experiments/exp6_language_selectivity/run.py \
+python experiments/exp4_language_selectivity/run.py \
   --dataset_csv data/hindi.csv \
   --model_name gpt2 \
   --device cuda \
