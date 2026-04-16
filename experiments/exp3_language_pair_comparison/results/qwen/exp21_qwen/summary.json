@@ -1,0 +1,250 @@
+{
+  "n_sentences": 999,
+  "activation_threshold": 0.0,
+  "metric1_neuron_similarity": {
+    "fr_en_group": {
+      "cs_fr_vs_french": {
+        "jaccard_mean": 0.7614408820523897,
+        "cosine_mean": 0.9301368233307091,
+        "jaccard_early": 0.7746105079584931,
+        "cosine_early": 0.9638573727062395,
+        "jaccard_late": 0.7851287359466878,
+        "cosine_late": 0.9527580219883103,
+        "best_jaccard_layer": 3,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      },
+      "cs_fr_vs_english": {
+        "jaccard_mean": 0.6099728131196361,
+        "cosine_mean": 0.7965795323796049,
+        "jaccard_early": 0.588596599510168,
+        "cosine_early": 0.8814322239420078,
+        "jaccard_late": 0.5317025975352098,
+        "cosine_late": 0.6674184321245931,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      },
+      "french_vs_english": {
+        "jaccard_mean": 0.5904052933392692,
+        "cosine_mean": 0.7607245214941906,
+        "jaccard_early": 0.5550387014215985,
+        "cosine_early": 0.8435328128235835,
+        "jaccard_late": 0.49004208257718784,
+        "cosine_late": 0.5620764002420224,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      }
+    },
+    "hi_en_group": {
+      "cs_hi_vs_hindi": {
+        "jaccard_mean": 0.8425306976528882,
+        "cosine_mean": 0.965312743435623,
+        "jaccard_early": 0.8735113668115847,
+        "cosine_early": 0.9895621679268323,
+        "jaccard_late": 0.8851108964561241,
+        "cosine_late": 0.9848870037643759,
+        "best_jaccard_layer": 0,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      },
+      "cs_hi_vs_english": {
+        "jaccard_mean": 0.4299462378676105,
+        "cosine_mean": 0.4066182730686287,
+        "jaccard_early": 0.43461275930819043,
+        "cosine_early": 0.6588094368375637,
+        "jaccard_late": 0.4111162929760304,
+        "cosine_late": 0.19871319613563504,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      },
+      "hindi_vs_english": {
+        "jaccard_mean": 0.41917345913945236,
+        "cosine_mean": 0.37458481437249624,
+        "jaccard_early": 0.424065061513592,
+        "cosine_early": 0.6375135366056297,
+        "jaccard_late": 0.4012092395253701,
+        "cosine_late": 0.15676810742715735,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      }
+    },
+    "cross_cs": {
+      "cs_fr_vs_cs_hi": {
+        "jaccard_mean": 0.4554972800094563,
+        "cosine_mean": 0.48691309314261827,
+        "jaccard_early": 0.459160674868424,
+        "cosine_early": 0.7260438443643523,
+        "jaccard_late": 0.4276103939318883,
+        "cosine_late": 0.27007225426755294,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 999
+      }
+    }
+  },
+  "check2_balanced_sentences": {
+    "ratio_window": [
+      0.45,
+      0.55
+    ],
+    "note": "Same as metric1 but only sentences with matrix-lang token ratio in window. If dominance persists here, it cannot be explained by token frequency.",
+    "fr_en_group": {
+      "cs_fr_vs_french": {
+        "jaccard_mean": 0.7338619279362714,
+        "cosine_mean": 0.9168202676943371,
+        "jaccard_early": 0.73775913945066,
+        "cosine_early": 0.9363357335329054,
+        "jaccard_late": 0.7423535096634569,
+        "cosine_late": 0.9257268339395524,
+        "best_jaccard_layer": 3,
+        "best_cosine_layer": 3,
+        "n_sentences": 5
+      },
+      "cs_fr_vs_english": {
+        "jaccard_mean": 0.6129299334431341,
+        "cosine_mean": 0.8195280219827378,
+        "jaccard_early": 0.5907517723621136,
+        "cosine_early": 0.8938151001930237,
+        "jaccard_late": 0.5625361726177339,
+        "cosine_late": 0.7510841101408005,
+        "best_jaccard_layer": 4,
+        "best_cosine_layer": 3,
+        "n_sentences": 5
+      }
+    },
+    "hi_en_group": {
+      "cs_hi_vs_hindi": {
+        "jaccard_mean": 0.6921181569097349,
+        "cosine_mean": 0.8458561599254608,
+        "jaccard_early": 0.7259869704242621,
+        "cosine_early": 0.9332975834608078,
+        "jaccard_late": 0.7448295033175353,
+        "cosine_late": 0.896748971939087,
+        "best_jaccard_layer": 26,
+        "best_cosine_layer": 3,
+        "n_sentences": 5
+      },
+      "cs_hi_vs_english": {
+        "jaccard_mean": 0.48129551742874177,
+        "cosine_mean": 0.5735461350397338,
+        "jaccard_early": 0.48398261812735094,
+        "cosine_early": 0.7651627942919732,
+        "jaccard_late": 0.4652436444734714,
+        "cosine_late": 0.4331688153557479,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 5
+      }
+    },
+    "cross_cs": {
+      "cs_fr_vs_cs_hi": {
+        "jaccard_mean": 0.5005581642740385,
+        "cosine_mean": 0.6232597337503519,
+        "jaccard_early": 0.4933683150683358,
+        "cosine_early": 0.7916378974914551,
+        "jaccard_late": 0.46109148229840424,
+        "cosine_late": 0.44898818228393794,
+        "best_jaccard_layer": 13,
+        "best_cosine_layer": 3,
+        "n_sentences": 5
+      }
+    }
+  },
+  "check3b_aligned_embedded_english": {
+    "note": "Position-matched comparison: same EN token string extracted from CS context vs the identical token in the monolingual English sentence. Eliminates whole-sentence mean baseline confound. vs_en_context: how much does CS context shift EN token activations away from pure EN? vs_matrix_mean: how much do shifted EN tokens resemble the matrix language?",
+    "cs_hi": {
+      "EN_tok_CS_vs_EN_context": {
+        "cosine_mean": 0.5053792258648347,
+        "cosine_early": 0.594079725239687,
+        "cosine_late": 0.3588920840916622,
+        "jaccard_mean": 0.43787500428444043,
+        "n_sentences": 999,
+        "n_matched_tok_mean": 11.558558558558559
+      },
+      "EN_tok_CS_vs_matrix_mean": {
+        "cosine_mean": 0.5589229845749266,
+        "cosine_early": 0.8043336688104581,
+        "cosine_late": 0.574038985225179,
+        "jaccard_mean": 0.542537384916721,
+        "n_sentences": 999,
+        "n_matched_tok_mean": 11.558558558558559
+      },
+      "interpretation": "If vs_matrix_mean > vs_en_context in late layers: Hindi context pulls EN token activations toward Hindi ? structural matrix dominance."
+    },
+    "cs_fr": {
+      "EN_tok_CS_vs_EN_context": {
+        "cosine_mean": 0.7406734623174477,
+        "cosine_early": 0.8052494113169913,
+        "cosine_late": 0.6869262750011154,
+        "jaccard_mean": 0.5623396601103376,
+        "n_sentences": 999,
+        "n_matched_tok_mean": 17.504504504504503
+      },
+      "EN_tok_CS_vs_matrix_mean": {
+        "cosine_mean": 0.7179290979864289,
+        "cosine_early": 0.8123443005488836,
+        "cosine_late": 0.7544204645426698,
+        "jaccard_mean": 0.5744190789584207,
+        "n_sentences": 999,
+        "n_matched_tok_mean": 17.504504504504503
+      },
+      "interpretation": "Same as above for French-English."
+    }
+  },
+  "check3_embedded_english_tokens": {
+    "note": "Activations of EN tokens inside CS sentences vs monolingual baselines. If EN-in-cs_hi is more similar to Hindi than English, the matrix language dominates even individual embedded tokens ? ruling out frequency as an explanation.",
+    "cs_hi": {
+      "EN_tokens_vs_english": {
+        "cosine_mean": 0.3827336525371207,
+        "cosine_early": 0.5901772545833148,
+        "cosine_late": 0.18822928377182147,
+        "n_sentences": 999
+      },
+      "EN_tokens_vs_hindi": {
+        "cosine_mean": 0.588178230727953,
+        "cosine_early": 0.8195686768013257,
+        "cosine_late": 0.6076669477027301,
+        "n_sentences": 999
+      },
+      "interpretation": "If hindi > english: matrix dominance is token-level, not frequency artifact"
+    },
+    "cs_fr": {
+      "EN_tokens_vs_english": {
+        "cosine_mean": 0.7234041841405635,
+        "cosine_early": 0.8255502544460003,
+        "cosine_late": 0.6627130891830131,
+        "n_sentences": 999
+      },
+      "EN_tokens_vs_french": {
+        "cosine_mean": 0.7631772008124986,
+        "cosine_early": 0.8440648797755917,
+        "cosine_late": 0.8060408480478464,
+        "n_sentences": 999
+      },
+      "interpretation": "If french > english: matrix dominance is token-level, not frequency artifact"
+    }
+  },
+  "metric2_attention_alignment": {
+    "mean_alignment": 0.0,
+    "early_alignment": 0.0,
+    "late_alignment": 0.0,
+    "peak_alignment_layer": 0,
+    "mean_shared_top3": 1.0,
+    "note": "head_alignment = cosine sim between cs_fr and cs_hi head activity profiles. 1.0 = same heads used, 0.0 = completely different heads."
+  },
+  "metric3_error_emergence": {
+    "cs_fr_error_mean": 200.41382344956733,
+    "cs_hi_error_mean": 218.12430790027085,
+    "cs_fr_error_early": 47.94675344825388,
+    "cs_hi_error_early": 51.74461173235594,
+    "cs_fr_error_late": 278.0562939228596,
+    "cs_hi_error_late": 352.78040741394466,
+    "peak_layer_cs_fr": 27,
+    "peak_layer_cs_hi": 27,
+    "note": "L2 distance from English baseline measured at switch token positions per layer."
+  }
+}
