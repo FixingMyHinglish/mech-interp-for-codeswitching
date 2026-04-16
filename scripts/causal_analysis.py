@@ -24,7 +24,7 @@ activation-patching experiments:
 Usage
 -----
   # From the project root:
-  PYTHONPATH=src python scripts/causal_analysis.py \\
+  python scripts/causal_analysis.py \\
       --config config.yaml \\
       --source_run outputs/serious_run_french_002 \\
       --output_dir causal_results \\

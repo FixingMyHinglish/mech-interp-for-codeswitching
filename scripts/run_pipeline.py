@@ -52,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--config", help="Path to YAML config")
     args = p.parse_args()
     if not args.config:
-        p.error("--config is required unless --new-compute-only is set.")
+        p.error("--config is required.")
     return args
 
 

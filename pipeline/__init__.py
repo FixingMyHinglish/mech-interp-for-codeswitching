@@ -5,4 +5,5 @@ __all__ = [
     "modeling",
     "analysis",
     "visualize",
+    "concept_metrics",
 ]
